@@ -9,7 +9,7 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 }
 
 $items = @(
-    @{ Name = 'FINNHUB_KEY'; Label = 'Finnhub API key'; Where = 'finnhub.io 로그인 > Dashboard 의 "API key" 칸 (보통 20자)' },
+    @{ Name = 'FINNHUB_KEY'; Label = 'Finnhub API key'; Where = 'finnhub.io 로그인 > Dashboard 의 "API key" 칸' },
     @{ Name = 'FRED_KEY';    Label = 'FRED API 키';     Where = 'fredaccount.stlouisfed.org/apikeys 에서 이 대시보드용으로 새로 받은 키 (32자)' }
 )
 

@@ -91,7 +91,7 @@ def update_finnhub_news(st: LocalStore, now: datetime):
         log("Finnhub 키 없음 — 뉴스 보충 건너뜀")
         return
     key = key.strip()
-    log(f"Finnhub 키 길이 {len(key)}자 (Finnhub API key는 보통 20자)")  # 값은 남기지 않고 길이만
+    log(f"Finnhub 키 길이 {len(key)}자")  # 값은 남기지 않고 길이만 (잘못 붙여넣었는지 확인용)
     old = st.read("news")
     has_fh = not old.empty and old["id"].astype(str).str.startswith("fh-").any()
     start = (now - timedelta(days=1 if has_fh else config.NEWS_BASELINE_DAYS)).date()

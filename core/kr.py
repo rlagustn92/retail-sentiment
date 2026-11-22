@@ -125,6 +125,19 @@ def universe(kospi: int = 200, kosdaq: int = 100) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["code", "name", "market"])
 
 
+def etf_universe(n: int = 150) -> pd.DataFrame:
+    """시가총액 상위 ETF: code, name, market='ETF'"""
+    rows, page = [], 1
+    while len(rows) < n and page <= 5:
+        j = _get("stocks/etf", {"page": page, "pageSize": 100})
+        st = j.get("stocks", [])
+        if not st:
+            break
+        rows += [{"code": x["itemCode"], "name": x.get("stockName", ""), "market": "ETF"} for x in st]
+        page += 1
+    return pd.DataFrame(rows[:n], columns=["code", "name", "market"])
+
+
 def all_trends(days: int = 60, workers: int = 8, codes: list[str] | None = None) -> pd.DataFrame:
     codes = sorted(set(codes or []) | {c for s in SECTORS.values() for c in s["members"]})
 
