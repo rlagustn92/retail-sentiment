@@ -321,4 +321,5 @@ def test_kr_history_compare():
     assert round(names["2020 코로나 폭락"]["mult"]) == 9 and round(names["2024 8월 블랙먼데이"]["mult"]) == 5
     assert round(c["mult"]) == 6 and c["pct"] > 99 and c["kospi"] == -0.01
     t = kr.history_text(c)
-    assert "평소의 6.0배" in t and "'2020 코로나 폭락'의 최악의 날보다는 약해요" in t
+    assert "평소의 6.0배" in t and "'2020 코로나 폭락' 최악의 날보다는 약하고, 나머지보다는 세요" in t
+    assert "최근 5일 큰손 합계" in t

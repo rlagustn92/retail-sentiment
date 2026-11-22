@@ -260,7 +260,7 @@ def kr_members(mem) -> str:
 def kr_history_card(c: dict, text: str) -> str:
     items = [dict(r, now=False) for r in c["rows"]] + [{
         "name": "지금", "date": c["date"], "big": c["big"], "personal": c["personal"], "mult": c["mult"] or 0,
-        "kospi": c["kospi"], "now": True}]
+        "kospi": c["kospi"], "big5": c.get("big5"), "now": True}]
     items.sort(key=lambda r: -(r["mult"] or 0))
     mx = max([r["mult"] or 0 for r in items] + [1]) * 1.05
     rows = []
@@ -272,7 +272,7 @@ def kr_history_card(c: dict, text: str) -> str:
         d = r["date"]
         kc = "" if r.get("kospi") is None else f" · 코스피 {_chg(r['kospi'])[0]}"
         rows.append(f"""<div class="hrow{' now' if r['now'] else ''}"><div class="n">{esc(r['name'])}
-<div style="font-size:11px;color:var(--faint);font-weight:600">{d.year % 100:02d}.{d.month:02d}.{d.day:02d} · 큰손 {esc(_won(r['big'])[0])} · 개인 {esc(_won(r['personal'])[0])}{esc(kc)}</div></div>
+<div style="font-size:11px;color:var(--faint);font-weight:600">{d.year % 100:02d}.{d.month:02d}.{d.day:02d} · 큰손 {esc(_won(r['big'])[0])} · 개인 {esc(_won(r['personal'])[0])}{esc(kc)}{'' if r.get('big5') is None else ' · 5일 ' + esc(_won(r['big5'])[0])}</div></div>
 <div class="bar"><i style="width:{w:.0f}%;background:{col}"></i></div>
 <div class="v" style="color:{col if r['now'] else 'var(--sub)'}">{m:.1f}배</div></div>""")
     return flat(f"""<div class="sect">역사 속 지금 (한국)</div>

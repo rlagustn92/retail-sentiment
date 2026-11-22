@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -67,10 +68,19 @@ def num(x) -> float | None:
         return None
 
 
-def _get(path: str, params: dict | None = None):
-    r = requests.get(f"{API}/{path}", params=params, headers=UA, timeout=15)
-    r.raise_for_status()
-    return r.json()
+def _get(path: str, params: dict | None = None, tries: int = 4):
+    """네이버는 한꺼번에 많이 부르면 가끔 막아요: 잠깐 쉬었다가 다시"""
+    for i in range(tries):
+        try:
+            r = requests.get(f"{API}/{path}", params=params, headers=UA, timeout=15)
+            if r.status_code == 429 or r.status_code >= 500:
+                raise requests.HTTPError(f"{r.status_code}", response=r)
+            r.raise_for_status()
+            return r.json()
+        except (requests.RequestException, ValueError):
+            if i == tries - 1:
+                raise
+            time.sleep(1.5 * (i + 1))
 
 
 # ---------------------------------------------------------------- 받기
@@ -161,8 +171,14 @@ def index_history(market: str, since) -> pd.DataFrame:
     return df[df["date"] >= since].drop_duplicates(["date", "market"]) if len(df) else df
 
 
-def build_history(since, workers: int = 8) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def build_history(since, workers: int = 4) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """(시장 합계, 섹터별, 지수) 일별 기록. 시장 합계 = 지금 시총 상위 300 종목의 합(코스피 200·코스닥 100)"""
+    idx = []
+    for m in MARKETS:  # 지수는 먼저(가벼움)
+        try:
+            idx.append(index_history(m, since))
+        except Exception:
+            pass
     u = universe()
     codes = sorted(set(u["code"]) | {c for sct in SECTORS.values() for c in sct["members"]})
 
@@ -195,12 +211,6 @@ def build_history(since, workers: int = 8) -> tuple[pd.DataFrame, pd.DataFrame, 
         g["sector"] = key
         secs.append(g.reset_index())
     sector = pd.concat(secs, ignore_index=True) if secs else pd.DataFrame()
-    idx = []
-    for m in MARKETS:
-        try:
-            idx.append(index_history(m, since))
-        except Exception:
-            pass
     index = pd.concat(idx, ignore_index=True) if idx else pd.DataFrame()
     for df in (market, sector, index):
         if len(df):
@@ -275,12 +285,19 @@ def history_text(c: dict) -> str:
     else:
         s += "로, 매도 쪽이 아니에요."
     s += f" 그날 개인은 {fmt_eok(c['personal'])}."
-    if c["mult"] and c["mult"] > 0 and c["rows"]:
-        worse = [r["name"] for r in c["rows"] if r["mult"] > c["mult"]]
-        if worse:
-            s += " 과거 폭락 중 " + ", ".join(f"'{n}'" for n in worse) + "의 최악의 날보다는 약해요."
+    rows = c["rows"]
+    if c["mult"] and c["mult"] > 0 and rows:
+        worse = [r for r in rows if r["mult"] > c["mult"]]
+        lo, hi = min(r["mult"] for r in rows), max(r["mult"] for r in rows)
+        if len(worse) == len(rows):
+            s += f" 과거 폭락 {len(rows)}번의 최악의 날(평소의 {lo:.1f}~{hi:.1f}배)보다는 약해요."
+        elif worse:
+            s += " " + ", ".join(f"'{r['name']}'" for r in worse) + " 최악의 날보다는 약하고, 나머지보다는 세요."
         else:
-            s += " 아래 과거 폭락들의 최악의 날보다도 세요."
+            s += f" 과거 폭락 {len(rows)}번의 최악의 날(평소의 {lo:.1f}~{hi:.1f}배)보다도 세요."
+    if rows and c.get("big5") is not None:
+        lo5, hi5 = min(r["big5"] for r in rows), max(r["big5"] for r in rows)
+        s += f" 최근 5일 큰손 합계는 {fmt_eok(c['big5'])}(과거 폭락 때 5일 최저 {fmt_eok(hi5)}~{fmt_eok(lo5)})."
     return s
 
 
