@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 
+import importlib
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 
 import altair as alt
@@ -13,7 +15,28 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-import ui
+# Streamlit Cloud는 새 코드를 받아도 core 모듈을 예전 것으로 들고 있을 때가 있어요(그러면 KeyError 등으로 멈춤).
+# 모듈 파일이 바뀌었거나 이 서버에서 처음 실행이면 의존 순서대로 다시 읽고 캐시를 비워요.
+_MODS = ["core.config", "core.scoring", "core.news", "core.retail_flow", "core.realtime", "core.store",
+         "core.cboe", "core.stocktwits", "core.alpaca", "core.finra", "core.fred", "core.finnhub",
+         "core.metrics", "core.sources", "ui"]
+
+
+def _fresh_modules():
+    mods = [importlib.import_module(n) for n in _MODS]
+    stamp = tuple(os.path.getmtime(m.__file__) for m in mods)
+    holder = sys.modules["core"]
+    if getattr(holder, "_app_stamp", None) != stamp:
+        for m in mods:
+            importlib.reload(m)
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        holder._app_stamp = stamp
+
+
+_fresh_modules()
+
+import ui  # noqa: E402  (위에서 새로 읽은 모듈을 가져와요)
 from core import config, sources
 from core import news as newsmod
 from core import retail_flow as rf
@@ -343,8 +366,12 @@ def render():
         (k, config.GROUPS[k]["name"], res[k].panic) for k in config.INDEX_KEYS + config.SECTOR_KEYS]
     st.markdown(ui.nav(GROUP, items), unsafe_allow_html=True)
     if GROUP != "all":  # 선택한 탭이 화면 밖에 있으면 보이게 스크롤
-        components.html("""<script>setTimeout(()=>{const a=window.parent.document.querySelector('.nav a.on');
-if(a){a.scrollIntoView({inline:'center',block:'nearest'});}},300);</script>""", height=0)
+        js = """<script>setTimeout(()=>{const a=window.parent.document.querySelector('.nav a.on');
+if(a){a.scrollIntoView({inline:'center',block:'nearest'});}},300);</script>"""
+        if hasattr(st, "iframe"):  # 새 버전 Streamlit (components.html은 없어질 예정)
+            st.iframe(js, height=1)
+        else:
+            components.html(js, height=0)
     if m.demo:
         st.markdown('<div class="demo">데모 데이터예요. 알파카 키를 넣으면 실제 데이터로 바뀌어요.</div>',
                     unsafe_allow_html=True)
