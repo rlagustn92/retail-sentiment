@@ -19,7 +19,7 @@ import streamlit.components.v1 as components
 # 모듈 파일이 바뀌었거나 이 서버에서 처음 실행이면 의존 순서대로 다시 읽고 캐시를 비워요.
 _MODS = ["core.config", "core.scoring", "core.news", "core.retail_flow", "core.realtime", "core.store",
          "core.cboe", "core.stocktwits", "core.alpaca", "core.finra", "core.fred", "core.finnhub",
-         "core.history", "core.metrics", "core.sources", "ui"]
+         "core.history", "core.kr", "core.metrics", "core.sources", "ui"]
 
 
 def _fresh_modules():
@@ -39,6 +39,7 @@ _fresh_modules()
 import ui  # noqa: E402  (위에서 새로 읽은 모듈을 가져와요)
 from core import config, sources
 from core import history
+from core import kr
 from core import news as newsmod
 from core import retail_flow as rf
 from core.alpaca import Alpaca
@@ -67,6 +68,10 @@ def secret(name: str, default=None):
 KEY, SECRET = secret("ALPACA_KEY"), secret("ALPACA_SECRET")
 DEMO = (not KEY or not SECRET) or st.query_params.get("demo") == "1"
 GROUP = st.query_params.get("g", "all")
+MARKET = "kr" if st.query_params.get("m") == "kr" else "us"
+KR_KEY = st.query_params.get("k", "all")
+if KR_KEY != "all" and KR_KEY not in kr.SECTORS:
+    KR_KEY = "all"
 if GROUP != "all" and GROUP not in config.GROUPS:
     GROUP = "all"
 
@@ -416,7 +421,7 @@ def render():
                 unsafe_allow_html=True)
     items = [("all", "전체", market_summary(res)["panic"])] + [
         (k, config.GROUPS[k]["name"], res[k].panic) for k in config.INDEX_KEYS + config.SECTOR_KEYS]
-    st.markdown(ui.nav(GROUP, items), unsafe_allow_html=True)
+    st.markdown(ui.market_switch("us") + ui.nav(GROUP, items), unsafe_allow_html=True)
     if GROUP != "all":  # 선택한 탭이 화면 밖에 있으면 보이게 스크롤
         js = """<script>setTimeout(()=>{const a=window.parent.document.querySelector('.nav a.on');
 if(a){a.scrollIntoView({inline:'center',block:'nearest'});}},300);</script>"""
@@ -441,4 +446,123 @@ if(a){a.scrollIntoView({inline:'center',block:'nearest'});}},300);</script>"""
     st.markdown(ui.footer(notes), unsafe_allow_html=True)
 
 
-render()
+# ------------------------------------------------------------------ 한국 시장
+@st.cache_data(ttl=90, show_spinner=False)
+def c_kr_index(market: str, slot: int):
+    return kr.index_now(market)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def c_kr_trends(slot: int):
+    return kr.all_trends()
+
+
+def kr_slot(seconds: int) -> int:
+    import time
+    return int(time.time() // seconds)
+
+
+def kr_flow_chart(intra: pd.DataFrame, market: str):
+    """장중 10분마다 기록한 투자자별 누적 순매수 (억원)"""
+    if intra is None or intra.empty or "market" not in intra:
+        return None
+    d = intra[intra["market"] == market].copy()
+    if d.empty:
+        return None
+    d["t"] = pd.to_datetime(d["ts"], utc=True).dt.tz_convert(KST)
+    d = d[d["t"].dt.date == d["t"].dt.date.max()]
+    if len(d) < 2:
+        return None
+    long = d.melt(id_vars=["t"], value_vars=["foreign", "inst", "personal"], var_name="who", value_name="v")
+    long["who"] = long["who"].map({"foreign": "외국인", "inst": "기관", "personal": "개인"})
+    long["t"] = long["t"].dt.tz_localize(None)
+    return alt.Chart(long).mark_line(strokeWidth=3, interpolate="monotone").encode(
+        x=alt.X("t:T", title=None, axis=alt.Axis(format="%H:%M", **AXIS, tickCount=5)),
+        y=alt.Y("v:Q", title=None, axis=alt.Axis(**AXIS, format=",.0f", tickCount=4)),
+        color=alt.Color("who:N", scale=alt.Scale(domain=["외국인", "기관", "개인"], range=["#7c5cff", "#00a3bf", "#f5a524"]),
+                        legend=alt.Legend(orient="top", title=None, labelColor="#8b95a1", labelFontSize=12)),
+        tooltip=[alt.Tooltip("t:T", title="시각", format="%H:%M"), alt.Tooltip("who:N", title="누가"),
+                 alt.Tooltip("v:Q", title="누적 순매수(억원)", format=",.0f")],
+    ).properties(height=190, background="transparent").configure_view(strokeWidth=0)
+
+
+def kr_daily_chart(daily: pd.DataFrame):
+    """섹터 최근 30거래일: 큰손(외국인+기관)과 개인 일별 순매수"""
+    if daily is None or len(daily) < 2:
+        return None
+    d = daily.reset_index().rename(columns={"index": "date"})
+    d["date"] = pd.to_datetime(d["date"])
+    long = d.melt(id_vars=["date"], value_vars=["big", "personal"], var_name="who", value_name="v")
+    long["who"] = long["who"].map({"big": "큰손(외국인+기관)", "personal": "개인"})
+    return alt.Chart(long).mark_bar(cornerRadius=2).encode(
+        x=alt.X("date:T", title=None, axis=alt.Axis(format="%m/%d", **AXIS, tickCount=6)),
+        xOffset="who:N",
+        y=alt.Y("v:Q", title=None, axis=alt.Axis(**AXIS, format=",.0f", tickCount=4)),
+        color=alt.Color("who:N", scale=alt.Scale(domain=["큰손(외국인+기관)", "개인"], range=["#7c5cff", "#f5a524"]),
+                        legend=alt.Legend(orient="top", title=None, labelColor="#8b95a1", labelFontSize=12)),
+        tooltip=[alt.Tooltip("date:T", title="날짜", format="%m/%d"), alt.Tooltip("who:N", title="누가"),
+                 alt.Tooltip("v:Q", title="순매수(억원)", format=",.0f")],
+    ).properties(height=190, background="transparent").configure_view(strokeWidth=0)
+
+
+@st.fragment(run_every=config.REFRESH_SEC)
+def render_kr():
+    err: dict = {}
+    open_ = kr.is_open()
+    slot = kr_slot(90 if open_ else 1800)
+    mk = []
+    for m in kr.MARKETS:
+        x = safe(err, "지수 수급", c_kr_index, m, slot)
+        if x:
+            mk.append(kr.market_summary(x, safe(err, "기록", c_store, "kr_market", default=pd.DataFrame())))
+    live = any(x.get("status") == "OPEN" for x in mk)
+    trends = safe(err, "섹터 수급", c_kr_trends, kr_slot(300 if live else 1800), default=pd.DataFrame())
+    secs = [s for s in (kr.sector_summary(k, trends) for k in kr.SECTORS) if s] if trends is not None and len(trends) else []
+    now_kst = pd.Timestamp.now(tz=KST)
+    st.markdown(ui.top(now_kst.strftime("%H:%M 업데이트"), live), unsafe_allow_html=True)
+    items = [("all", "전체", None)] + [(s["key"], s["name"], s["big_score"]) for s in secs]
+    nav = ui.nav(KR_KEY, items).replace('href="?g=', 'href="?m=kr&k=')
+    st.markdown(ui.market_switch("kr") + nav, unsafe_allow_html=True)
+    if KR_KEY == "all":
+        if mk:
+            d = mk[0].get("date")
+            label = (f"장중 잠정 · {mk[0]['time'].strftime('%H:%M')}" if live and mk[0].get("time") is not None
+                     else f"{d.month}월 {d.day}일 장 마감 기준" if d else "")
+            with st.container(key="kr_market"):
+                st.markdown(ui.kr_market_card(mk, label), unsafe_allow_html=True)
+                ch = kr_flow_chart(safe(err, "기록", c_store, "kr_intraday", default=pd.DataFrame()), "KOSPI")
+                if ch is not None:
+                    st.markdown(ui.section("코스피 장중 누적 순매수", "10분마다 기록 · 억원"), unsafe_allow_html=True)
+                    st.altair_chart(ch, width="stretch")
+        if secs:
+            secs_sorted = sorted(secs, key=lambda s: -(s["big_score"] if s["big_score"] is not None else -1))
+            d = secs[0]["date"]
+            with st.container(key="kr_sectors"):
+                st.markdown(ui.section("섹터별 수급 지도", f"큰손 매도 강도 높은 순 · {d.month}월 {d.day}일 · 눌러서 종목별 보기")
+                            + ui.kr_tiles(secs_sorted), unsafe_allow_html=True)
+    else:
+        s = next((x for x in secs if x["key"] == KR_KEY), None)
+        if s is None:
+            st.markdown('<div class="empty">섹터 데이터를 못 받았어요. 잠시 뒤 다시 열어 주세요.</div>', unsafe_allow_html=True)
+        else:
+            with st.container(key="kr_hero"):
+                st.markdown(ui.kr_sector_hero(s), unsafe_allow_html=True)
+            ch = kr_daily_chart(s["daily"])
+            if ch is not None:
+                with st.container(key="kr_daily"):
+                    st.markdown(ui.section("최근 30거래일 순매수", "억원 · 보라 큰손 · 주황 개인"), unsafe_allow_html=True)
+                    st.altair_chart(ch, width="stretch")
+            with st.container(key="kr_members"):
+                st.markdown(ui.kr_members(s["members"]), unsafe_allow_html=True)
+    notes = ["네이버 증권 공개 데이터예요. 지수 수급은 장중 잠정치, 섹터 수급은 대표 종목들의 일별 투자자 순매수를 더한 값이에요.",
+             "섹터 수급은 장중엔 전 거래일 기준일 수 있어요(종목별 투자자 데이터가 장 마감 뒤 확정돼요).",
+             "수급 판정은 상황 판단을 돕는 참고예요. 매수·매도 신호가 아니에요."]
+    if err:
+        notes.append("못 받은 데이터: " + ", ".join(sorted(err)))
+    st.markdown(ui.footer(notes), unsafe_allow_html=True)
+
+
+if MARKET == "kr":
+    render_kr()
+else:
+    render()

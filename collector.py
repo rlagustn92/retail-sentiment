@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
-from core import cboe, config, finra, fred, sources
+from core import cboe, config, finra, fred, kr, sources
 from core import news as newsmod
 from core import retail_flow as rf
 from core.finnhub import Finnhub
@@ -25,9 +25,10 @@ from core.alpaca import Alpaca
 from core.metrics import ET, MarketData, build_all
 from core.store import LocalStore
 
-KEEP_DAYS = {"retail": 100, "stocktwits": 60, "score": 45, "putcall": 400, "news": 4, "finra": 400, "fred": 800}
+KEEP_DAYS = {"retail": 100, "stocktwits": 60, "score": 45, "putcall": 400, "news": 4, "finra": 400, "fred": 800,
+             "kr_intraday": 15, "kr_market": 800}
 DATE_COL = {"retail": "bucket", "stocktwits": "ts", "score": "ts", "putcall": "date", "news": "ts",
-            "finra": "date", "fred": "date"}
+            "finra": "date", "fred": "date", "kr_intraday": "ts", "kr_market": "date"}
 
 
 def log(*a):
@@ -141,6 +142,25 @@ def update_fred(st: LocalStore, now: datetime):
         log(f"FRED {sid} {len(df)}개, 최근 {df['date'].max().date() if len(df) else '-'}")
 
 
+def update_kr(st: LocalStore, now: datetime, daily: bool):
+    """한국 지수 투자자별 순매수: 장중엔 10분마다 스냅샷, 장 마감 뒤엔 일별 확정치"""
+    rows = []
+    for m in kr.MARKETS:
+        x = kr.index_now(m)
+        rows.append({k: x[k] for k in ("market", "personal", "foreign", "inst", "price", "chg")}
+                    | {"ts": pd.Timestamp(now), "date": pd.Timestamp(x["date"], tz="UTC") if x["date"] else None,
+                       "status": x["status"]})
+    df = pd.DataFrame(rows)
+    if daily:
+        st.append("kr_market", df.drop(columns=["ts", "status"]).dropna(subset=["date"]))
+        log("한국 일별", df[["market", "date", "foreign", "inst", "personal"]].to_dict("records"))
+    elif (df["status"] == "OPEN").any():
+        st.append("kr_intraday", df.drop(columns=["date", "status"]))
+        log("한국 장중", df[["market", "foreign", "inst", "personal"]].to_dict("records"))
+    else:
+        log("한국 장 닫힘 — 건너뜀", df["status"].tolist())
+
+
 def attempt(name: str, fn, *args):
     """한 가지가 실패해도 나머지 수집은 계속"""
     try:
@@ -192,10 +212,17 @@ def record_scores(a: Alpaca, st: LocalStore, now: datetime, st_now: dict):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["intraday", "daily", "backfill"])
+    ap.add_argument("mode", choices=["intraday", "daily", "backfill", "kr", "kr_daily"])
     ap.add_argument("--days", type=int, default=10)
     ap.add_argument("--data", default="data")
     args = ap.parse_args()
+
+    if args.mode in ("kr", "kr_daily"):  # 한국 시장은 알파카 키 없이
+        st = LocalStore(args.data)
+        update_kr(st, datetime.now(timezone.utc), daily=args.mode == "kr_daily")
+        if args.mode == "kr_daily":
+            trim(st)
+        return
 
     key, secret = os.environ.get("ALPACA_KEY"), os.environ.get("ALPACA_SECRET")
     if not key or not secret:

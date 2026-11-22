@@ -225,3 +225,55 @@ def test_history_compare():
     assert names["2020 코로나 폭락"] == 82.7 and names["2008 리먼 사태"] == 80.9
     assert c["next_above"]["name"] == "2018 연말 급락" and c["pct"] > 99
     assert "2018 연말 급락" in history.summary(c)
+
+
+# ---------------------------------------------------------------- 한국 시장 (네이버 데이터 모양만 흉내)
+from core import kr
+
+
+def test_kr_num_and_fmt():
+    assert kr.num("+15,381") == 15381 and kr.num("-2,299,994") == -2299994 and kr.num("45.86%") == 45.86
+    assert kr.fmt_eok(15381) == "+1.5조" and kr.fmt_eok(-9330) == "-9,330억" and kr.fmt_eok(None) == "–"
+
+
+def test_kr_stock_trend_parse(monkeypatch):
+    rows = [{"bizdate": "20261120", "foreignerPureBuyQuant": "-1,000,000", "organPureBuyQuant": "+500,000",
+             "individualPureBuyQuant": "+500,000", "closePrice": "180,000", "compareToPreviousClosePrice": "-20,000"}]
+    monkeypatch.setattr(kr, "_get", lambda path, params=None: rows)
+    df = kr.stock_trend("005930")
+    assert abs(df["foreign"].iloc[0] - (-1800)) < 1e-6          # 100만주 × 18만원 = 1,800억
+    assert abs(df["chg"].iloc[0] - (-0.1)) < 1e-9
+
+
+def _kr_trends(last_big: float, last_personal: float) -> pd.DataFrame:
+    days = [d.date() for d in pd.bdate_range(end="2026-11-20", periods=40)]
+    rows = []
+    for i, d in enumerate(days):
+        big = last_big if d == days[-1] else (i % 7 - 3) * 10.0
+        per = last_personal if d == days[-1] else -big
+        rows.append({"date": d, "code": "005930", "foreign": big * 0.6, "inst": big * 0.4, "personal": per,
+                     "close": 1.0, "chg": -0.05 if d == days[-1] else 0.0})
+    return pd.DataFrame(rows)
+
+
+def test_kr_sector_verdicts():
+    s = kr.sector_summary("semi", _kr_trends(-500, +500))
+    assert s["big_score"] > 95 and s["title"] == "큰손이 던지고 개인이 받는 중"
+    s = kr.sector_summary("semi", _kr_trends(+500, -500))
+    assert s["title"] == "개인이 던지고 큰손이 받는 중" and s["members"]["name"].iloc[0] == "삼성전자"
+    assert kr.sector_summary("auto", _kr_trends(-500, 500)) is None        # 해당 종목 데이터 없음
+
+
+def test_kr_market_summary_fixed_threshold():
+    now = {"market": "KOSPI", "date": pd.Timestamp("2026-11-20").date(), "foreign": -10956, "inst": -9330,
+           "personal": 15381}
+    m = kr.market_summary(now)
+    assert m["title"] == "큰손이 던지고 개인이 받는 중" and m["big"] == -20286 and m["big_score"] is None
+    quiet = kr.market_summary(dict(now, foreign=-100, inst=50, personal=60))
+    assert quiet["title"] == "뚜렷한 쏠림 없음"
+
+
+def test_kr_is_open():
+    assert kr.is_open(pd.Timestamp("2026-11-23 01:00", tz="UTC"))          # 월 10시 (한국)
+    assert not kr.is_open(pd.Timestamp("2026-11-22 01:00", tz="UTC"))      # 일요일
+    assert not kr.is_open(pd.Timestamp("2026-11-23 07:00", tz="UTC"))      # 16시

@@ -59,6 +59,19 @@ header[data-testid="stHeader"],#MainMenu,footer,[data-testid="stToolbar"],[data-
 .hrow .v{font-weight:800;text-align:right;min-width:34px;}
 .hrow .bar{height:8px;}
 .tile .q{font-size:12px;font-weight:700;margin-top:3px;color:var(--faint);}
+.mkt{display:flex;gap:6px;margin:2px 0 10px;}
+.mkt a{font-size:14px;font-weight:800;padding:7px 14px;border-radius:12px;background:var(--card);color:var(--sub)!important;text-decoration:none!important;}
+.mkt a.on{background:var(--text);color:var(--bg)!important;}
+.kr3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px;}
+.kr3 div{background:var(--chip);border-radius:14px;padding:10px 10px 9px;}
+.kr3 .k{font-size:12px;color:var(--sub);font-weight:700;}.kr3 .v{font-size:18px;font-weight:800;margin-top:3px;letter-spacing:-0.4px;}
+.kr3 .s{font-size:11px;color:var(--faint);font-weight:600;margin-top:2px;}
+.krm{padding:14px 0;border-top:1px solid var(--line);}.krm:first-of-type{border-top:none;}
+.krm .h{display:flex;justify-content:space-between;align-items:baseline;}
+.krm .h .n{font-size:18px;font-weight:800;}.krm .h .p{font-size:15px;font-weight:800;}
+.ktile{display:block;border-radius:18px;padding:13px 13px 11px;text-decoration:none!important;background:var(--chip);color:var(--text)!important;}
+.ktile .n{font-size:15px;font-weight:800;}.ktile .t{font-size:13px;font-weight:700;margin-top:4px;line-height:1.35;}
+.ktile .f{font-size:12px;color:var(--sub);font-weight:600;margin-top:5px;line-height:1.5;}
 .mini{flex:1;background:var(--chip);border-radius:16px;padding:14px 14px 12px;}
 .mini .k{font-size:13px;color:var(--sub);font-weight:600;}
 .mini .v{font-size:22px;font-weight:800;letter-spacing:-0.5px;margin-top:4px;}
@@ -157,6 +170,91 @@ def _side(x) -> tuple[str, str]:
     if abs(x) < 0.005:
         return "균형", "var(--sub)"
     return (f"매도 {abs(x) * 100:.0f}%", "var(--down)") if x > 0 else (f"매수 {abs(x) * 100:.0f}%", "var(--up)")
+
+
+def market_switch(cur: str) -> str:
+    """미국 / 한국 전환"""
+    return flat(f'''<div class="mkt"><a href="?" target="_self" class="{"on" if cur == "us" else ""}">🇺🇸 미국</a>
+<a href="?m=kr" target="_self" class="{"on" if cur == "kr" else ""}">🇰🇷 한국</a></div>''')
+
+
+def _won(x) -> tuple[str, str]:
+    """억원 순매수 → 글자, 색 (매수 빨강 · 매도 파랑)"""
+    from core.kr import fmt_eok
+    if x is None or x != x:
+        return "–", "var(--faint)"
+    return fmt_eok(x), ("var(--up)" if x > 0 else "var(--down)" if x < 0 else "var(--sub)")
+
+
+def kr_three(foreign, inst, personal, sub: str = "") -> str:
+    cells = []
+    for k, v in (("외국인", foreign), ("기관", inst), ("개인", personal)):
+        t, c = _won(v)
+        cells.append(f'<div><div class="k">{k}</div><div class="v" style="color:{c}">{esc(t)}</div>'
+                     + (f'<div class="s">{esc(sub)}</div>' if sub else "") + "</div>")
+    return '<div class="kr3">' + "".join(cells) + "</div>"
+
+
+def kr_market_card(items: list[dict], label: str) -> str:
+    out = []
+    for x in items:
+        ct, cc = _chg(x.get("chg"))
+        sc = x.get("big_score")
+        scs = "" if sc is None else f' · 큰손 매도 강도 <b style="color:{level(sc)[1]}">{sc:.0f}</b>'
+        out.append(f"""<div class="krm"><div class="h"><div class="n">{esc(x['name'])}</div>
+<div class="p">{'' if x.get('price') is None else f"{x['price']:,.2f}"} <span style="color:{cc}">{ct}</span></div></div>
+{kr_three(x.get('foreign'), x.get('inst'), x.get('personal'))}
+<div class="verdict"><div class="vt">{esc(x['title'])}</div><div class="vd">{esc(x['desc'])}{scs}</div></div></div>""")
+    return flat(f"""<div class="label">한국 시장 수급 · {esc(label)}</div>{''.join(out)}
+<div class="sectsub">오늘 누적 순매수(억원) · 빨강 매수 · 파랑 매도 · 외국인+기관 = 큰손</div>""")
+
+
+def kr_tiles(secs: list[dict]) -> str:
+    out = []
+    for s in secs:
+        sc = s.get("big_score")
+        col = level(sc)[1] if sc is not None else "var(--faint)"
+        bg = tint(col, 0.10) if sc is not None and sc >= 60 else "var(--chip)"
+        ct, cc = _chg(s.get("chg"))
+        f_, fc = _won(s["foreign"])
+        i_, ic = _won(s["inst"])
+        p_, pc = _won(s["personal"])
+        out.append(f"""<a class="ktile" href="?m=kr&k={s['key']}" target="_self" style="background:{bg}">
+<div class="n">{esc(s['name'])} <span style="color:{cc};font-size:13px">{ct}</span>
+<span style="float:right;color:{col};font-size:13px">{'' if sc is None else f'매도 강도 {sc:.0f}'}</span></div>
+<div class="t">{esc(s['title'])}</div>
+<div class="f">외 <b style="color:{fc}">{esc(f_)}</b> · 기 <b style="color:{ic}">{esc(i_)}</b> · 개 <b style="color:{pc}">{esc(p_)}</b></div></a>""")
+    return flat('<div class="tiles">' + "".join(out) + "</div>")
+
+
+def kr_sector_hero(s: dict) -> str:
+    sc = s.get("big_score")
+    name, color = level(sc)
+    val = "–" if sc is None else f"{sc:.0f}"
+    w = 0 if sc is None else max(3, sc)
+    ct, cc = _chg(s.get("chg"))
+    d = s["date"]
+    five = s["five"]
+    return flat(f"""<div class="label">{esc(s['name'])} 큰손 매도 강도 · {d.month}월 {d.day}일 기준 · 평균 등락 <span style="color:{cc}">{ct}</span></div>
+<div class="big"><span class="num" style="color:{color}">{val}</span><span class="unit">/100</span></div>
+<div class="gauge"><div class="gfill" style="width:{w}%;background:{color}"></div>
+<div class="gmark" style="left:40%"></div><div class="gmark" style="left:70%"></div></div>
+<div class="gticks"><span style="left:0">평소</span><span style="left:40%;transform:translateX(-50%)">40</span>
+<span style="left:70%;transform:translateX(-50%)">70</span></div>
+<div class="head">{esc(s['title'])}</div><div class="desc">{esc(s['desc'])}</div>
+<div class="label" style="margin-top:14px">오늘</div>{kr_three(s['foreign'], s['inst'], s['personal'])}
+<div class="label" style="margin-top:12px">최근 {s['ndays']}일 합계</div>{kr_three(five['foreign'], five['inst'], five['personal'])}
+<div class="sectsub" style="margin-top:8px">큰손 매도 강도: 외국인+기관 순매수가 최근 60거래일 중 얼마나 낮은지(많이 팔았는지)예요.</div>""")
+
+
+def kr_members(mem) -> str:
+    rows = []
+    for _, r in mem.iterrows():
+        ct, cc = _chg(r.get("chg"))
+        cells = "".join(f'<td style="color:{_won(r[k])[1]}">{esc(_won(r[k])[0])}</td>' for k in ("foreign", "inst", "personal"))
+        rows.append(f'<tr><th>{esc(r["name"])} <span style="color:{cc}">{ct}</span></th>{cells}</tr>')
+    return flat(f"""<div class="sect">종목별 수급</div><div class="sectsub">많이 빠진 순 · 그날 순매수(억원)</div>
+<table class="ftab"><thead><tr><th></th><th>외국인</th><th>기관</th><th>개인</th></tr></thead><tbody>{''.join(rows)}</tbody></table>""")
 
 
 def flow_card(flow: dict, inst) -> str:

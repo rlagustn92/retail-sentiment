@@ -16,11 +16,14 @@ FILES = {
     "news": "news.csv",              # id, ts, headline, source, url, symbols, tone
     "finra": "finra_short.csv",      # date, sym, short, total, ratio (FINRA 장외 공매도)
     "fred": "fred.csv",              # date, series, value
+    "kr_intraday": "kr_intraday.csv",  # ts, market, personal, foreign, inst, price, chg (한국 장중 10분마다)
+    "kr_market": "kr_market.csv",      # date, market, personal, foreign, inst, price, chg (한국 일별)
 }
 KEYS = {"retail": ["bucket", "sym"], "putcall": ["date"], "stocktwits": ["ts", "sym"],
-        "score": ["ts", "group"], "news": ["id"], "finra": ["date", "sym"], "fred": ["date", "series"]}
+        "score": ["ts", "group"], "news": ["id"], "finra": ["date", "sym"], "fred": ["date", "series"],
+        "kr_intraday": ["ts", "market"], "kr_market": ["date", "market"]}
 DATE_COLS = {"retail": ["bucket"], "stocktwits": ["ts"], "score": ["ts"], "putcall": ["date"],
-             "news": ["ts"], "finra": ["date"], "fred": ["date"]}
+             "news": ["ts"], "finra": ["date"], "fred": ["date"], "kr_intraday": ["ts"], "kr_market": ["date"]}
 
 
 def _parse(name: str, text: str) -> pd.DataFrame:
