@@ -1,0 +1,65 @@
+# 한국 시장 수집: 장중 10분마다 지수 투자자별 순매수, 장 마감 후 일별 확정치와 과거 수급 기록(kr_hist) 갱신.
+# 알파카 키가 필요 없어요. 미국 수집(collect)과 따로 돌아요.
+name: collect-kr
+
+on:
+  schedule:
+    - cron: "*/10 0-6 * * 1-5"     # 한국시간 9시~15시 50분
+    - cron: "10 7 * * 1-5"         # 한국시간 16시 10분: 일별 확정치 + 과거 기록 갱신
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "kr / kr_daily / kr_hist"
+        default: kr_hist
+        type: choice
+        options: [kr_hist, kr_daily, kr]
+      since:
+        description: "kr_hist: 이 날짜부터 과거 수급을 채워요 (YYYY-MM-DD)"
+        default: "2020-01-01"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collect-kr
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements-collector.txt
+
+      - name: data 브랜치 가져오기 (없으면 새로 만듦)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$URL" data > /dev/null; then
+            git clone --depth 1 --branch data "$URL" data
+          else
+            mkdir -p data && cd data && git init -b data && git remote add origin "$URL"
+          fi
+
+      - name: 수집
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MODE="${{ github.event.inputs.mode }}"
+          elif [ "${{ github.event.schedule }}" = "10 7 * * 1-5" ]; then
+            MODE=kr_daily
+          else
+            MODE=kr
+          fi
+          python collector.py "$MODE" --since "${{ github.event.inputs.since || '2020-01-01' }}" --data data
+
+      - name: data 브랜치에 저장
+        if: always()   # 수집이 중간에 실패·시간 초과돼도 그때까지 계산한 건 저장
+        run: bash tools/save_data.sh kr

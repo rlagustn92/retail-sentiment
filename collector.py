@@ -174,6 +174,20 @@ def update_kr(st: LocalStore, now: datetime, daily: bool):
         log("한국 장 닫힘 — 건너뜀", df["status"].tolist())
 
 
+def update_kr_hist(st: LocalStore, since):
+    """한국 과거 수급(시총 상위 300 합·섹터별·지수 등락)을 since부터 채우고, 이미 있으면 최근 것만 이어 붙여요"""
+    old = st.read("kr_hist_market")
+    start = since
+    if not old.empty:
+        start = max(since, (pd.to_datetime(old["date"]).max() - pd.Timedelta(days=14)).date())
+    t0 = datetime.now(timezone.utc)
+    mk, sec, idx = kr.build_history(start)
+    for name, df in (("kr_hist_market", mk), ("kr_hist_sector", sec), ("kr_index", idx)):
+        st.append(name, df)
+    log(f"한국 과거 수급 {start}~: 시장 {len(mk)}행 · 섹터 {len(sec)}행 · 지수 {len(idx)}행 "
+        f"({(datetime.now(timezone.utc) - t0).seconds}초)")
+
+
 def attempt(name: str, fn, *args):
     """한 가지가 실패해도 나머지 수집은 계속"""
     try:
@@ -225,15 +239,19 @@ def record_scores(a: Alpaca, st: LocalStore, now: datetime, st_now: dict):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["intraday", "daily", "backfill", "kr", "kr_daily"])
+    ap.add_argument("mode", choices=["intraday", "daily", "backfill", "kr", "kr_daily", "kr_hist"])
     ap.add_argument("--days", type=int, default=10)
     ap.add_argument("--data", default="data")
+    ap.add_argument("--since", default="2020-01-01", help="kr_hist: 이 날짜부터 한국 과거 수급을 채워요")
     args = ap.parse_args()
 
-    if args.mode in ("kr", "kr_daily"):  # 한국 시장은 알파카 키 없이
+    if args.mode in ("kr", "kr_daily", "kr_hist"):  # 한국 시장은 알파카 키 없이
         st = LocalStore(args.data)
-        update_kr(st, datetime.now(timezone.utc), daily=args.mode == "kr_daily")
-        if args.mode == "kr_daily":
+        now = datetime.now(timezone.utc)
+        if args.mode != "kr_hist":
+            update_kr(st, now, daily=args.mode == "kr_daily")
+        if args.mode in ("kr_daily", "kr_hist"):
+            attempt("한국 과거 수급", update_kr_hist, st, pd.Timestamp(args.since).date())
             trim(st)
         return
 

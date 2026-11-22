@@ -6,15 +6,13 @@ on:
   schedule:
     - cron: "*/15 13-21 * * 1-5"   # 미국 정규장 (서머타임 여부와 관계없이 커버)
     - cron: "40 21 * * 1-5"        # 장 마감 후 정리
-    - cron: "*/10 0-6 * * 1-5"     # 한국 장중 (한국시간 9시~15시 50분) 투자자별 순매수 스냅샷
-    - cron: "10 7 * * 1-5"         # 한국 장 마감 후 일별 확정치 (한국시간 16시 10분)
   workflow_dispatch:
     inputs:
       mode:
         description: "intraday / daily / backfill"
         default: backfill
         type: choice
-        options: [backfill, intraday, daily, kr, kr_daily]
+        options: [backfill, intraday, daily]
       days:
         description: "backfill 할 거래일 수"
         default: "10"
@@ -23,7 +21,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: collect
+  group: collect-us   # 한국 수집(collect-kr)과는 따로 돌아요. 저장할 때 서로의 파일을 지키며 합쳐요.
   cancel-in-progress: false
 
 jobs:
@@ -62,22 +60,11 @@ jobs:
             MODE="${{ github.event.inputs.mode }}"
           elif [ "${{ github.event.schedule }}" = "40 21 * * 1-5" ]; then
             MODE=daily
-          elif [ "${{ github.event.schedule }}" = "*/10 0-6 * * 1-5" ]; then
-            MODE=kr
-          elif [ "${{ github.event.schedule }}" = "10 7 * * 1-5" ]; then
-            MODE=kr_daily
           else
             MODE=intraday
           fi
           python collector.py "$MODE" --days "${{ github.event.inputs.days || '10' }}" --data data
 
       - name: data 브랜치에 저장
-        if: always()   # 수집이 중간에 실패해도 그때까지 계산한 건 저장
-        run: |
-          [ -d data/.git ] || { echo "data 폴더 없음"; exit 0; }
-          cd data
-          git config user.name "collector-bot"
-          git config user.email "collector-bot@users.noreply.github.com"
-          git add -A
-          git commit -m "data $(date -u +%Y-%m-%dT%H:%MZ)" || { echo "변경 없음"; exit 0; }
-          git push origin data
+        if: always()   # 수집이 중간에 실패·시간 초과돼도 그때까지 계산한 건 저장
+        run: bash tools/save_data.sh us

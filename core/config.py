@@ -132,7 +132,7 @@ WEIGHTS = {
 
 # FRED에서 받는 시리즈: 하이일드 채권 스프레드 (ICE BofA US High Yield OAS, %p)
 FRED_SERIES = {"credit": "BAMLH0A0HYM2"}
-FINRA_LOOKBACK = 70     # FINRA 장외 공매도: 최근 몇 거래일을 채워 둘지
+FINRA_LOOKBACK = 250    # FINRA 장외 공매도: 최근 몇 거래일을 채워 둘지 (약 1년)
 
 # 기준치(과거 기록)가 부족할 때 쓰는 고정 눈금: (0점 값, 100점 값)
 FALLBACK_SCALE = {
