@@ -96,15 +96,23 @@ def update_finnhub_news(st: LocalStore, now: datetime):
     end = (now + timedelta(days=1)).date()
     fh = Finnhub(key)
     syms = sorted({s for g in config.GROUPS.values() for s in g["members"]})
-    parts, fails = [], 0
+    parts, fails, first_err = [], 0, None
     for sym in syms:
         try:
             parts.append(finnhub_frame(fh.company_news(sym, start, end), sym))
         except Exception as e:
             fails += 1
-            code = getattr(getattr(e, "response", None), "status_code", None)
+            resp = getattr(e, "response", None)
+            code = getattr(resp, "status_code", None)
+            if first_err is None:
+                body = (resp.text[:150] if resp is not None else "")
+                first_err = f"{sym}: {type(e).__name__} {code or ''} {str(e)[:150]} {body}"
+                log("Finnhub 첫 오류", first_err)
             if code in (401, 403):
-                log("Finnhub 키가 맞지 않아요 — 중단", code)
+                log("Finnhub 키가 맞지 않거나 권한이 없어요 — 중단", code)
+                return
+            if fails >= 5 and not parts:
+                log("Finnhub 처음 5종목이 모두 실패 — 중단")
                 return
     new = newsmod.merge(*parts)
     st.append("news", new)

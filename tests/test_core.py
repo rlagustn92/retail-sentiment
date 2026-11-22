@@ -277,3 +277,15 @@ def test_kr_is_open():
     assert kr.is_open(pd.Timestamp("2026-11-23 01:00", tz="UTC"))          # 월 10시 (한국)
     assert not kr.is_open(pd.Timestamp("2026-11-22 01:00", tz="UTC"))      # 일요일
     assert not kr.is_open(pd.Timestamp("2026-11-23 07:00", tz="UTC"))      # 16시
+
+
+def test_kr_rankings():
+    rows = []
+    for d in pd.bdate_range(end="2026-11-20", periods=6):
+        for code, f in (("A", -100.0), ("B", 50.0), ("C", -300.0)):
+            rows.append({"date": d.date(), "code": code, "foreign": f, "inst": 0.0, "personal": -f, "close": 1.0, "chg": -0.01})
+    names = pd.DataFrame({"code": ["A", "B", "C"], "name": ["가", "나", "다"], "market": ["코스피"] * 3})
+    df, day = kr.rankings(pd.DataFrame(rows), names, "foreign", "sell", 5)
+    assert list(df["name"]) == ["다", "가"] and df["five"].iloc[0] == -1500 and str(day) == "2026-11-20"
+    df, _ = kr.rankings(pd.DataFrame(rows), names, "personal", "buy", 5)
+    assert list(df["name"]) == ["다", "가"]

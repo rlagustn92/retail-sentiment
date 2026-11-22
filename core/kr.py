@@ -103,8 +103,30 @@ def stock_trend(code: str, days: int = 60) -> pd.DataFrame:
     return pd.DataFrame(out, columns=["date", "code", "foreign", "inst", "personal", "close", "chg"])
 
 
-def all_trends(days: int = 60, workers: int = 8) -> pd.DataFrame:
-    codes = sorted({c for s in SECTORS.values() for c in s["members"]})
+_PREF = ("우", "우B", "우C", "우(전환)")
+
+
+def universe(kospi: int = 200, kosdaq: int = 100) -> pd.DataFrame:
+    """시가총액 상위 종목 (ETF·우선주 제외): code, name, market"""
+    rows = []
+    for market, n in (("KOSPI", kospi), ("KOSDAQ", kosdaq)):
+        got, page = 0, 1
+        while got < n and page <= 6:
+            j = _get(f"stocks/marketValue/{market}", {"page": page, "pageSize": 100})
+            for x in j.get("stocks", []):
+                nm = x.get("stockName", "")
+                if x.get("stockEndType") != "stock" or nm.endswith(_PREF) or got >= n:
+                    continue
+                rows.append({"code": x["itemCode"], "name": nm, "market": MARKETS[market]})
+                got += 1
+            if not j.get("stocks"):
+                break
+            page += 1
+    return pd.DataFrame(rows, columns=["code", "name", "market"])
+
+
+def all_trends(days: int = 60, workers: int = 8, codes: list[str] | None = None) -> pd.DataFrame:
+    codes = sorted(set(codes or []) | {c for s in SECTORS.values() for c in s["members"]})
 
     def one(c):
         try:
@@ -212,6 +234,27 @@ def market_summary(now: dict, hist: pd.DataFrame | None = None) -> dict:
     return dict(now, big=big, big_score=big_sc, retail_score=ret_sc, title=title, desc=desc)
 
 
+INVESTORS = {"foreign": "외국인", "inst": "기관", "personal": "개인"}
+
+
+def rankings(trends: pd.DataFrame, names: pd.DataFrame, who: str, side: str, n: int = 15) -> tuple[pd.DataFrame, object]:
+    """그날 투자자별 순매도(side='sell')·순매수('buy') 상위 종목. (표, 기준일)"""
+    if trends is None or trends.empty:
+        return pd.DataFrame(), None
+    t = trends[trends["code"].isin(names["code"])] if names is not None and len(names) else trends
+    day = t["date"].max()
+    cur = t[t["date"] == day].set_index("code")
+    last5 = sorted(t["date"].unique())[-5:]
+    five = t[t["date"].isin(last5)].groupby("code")[who].sum()
+    df = cur[[who, "chg"]].join(five.rename("five"))
+    df = df.sort_values(who, ascending=(side == "sell")).head(n)
+    df = df[(df[who] < 0) if side == "sell" else (df[who] > 0)]
+    info = names.set_index("code") if names is not None and len(names) else pd.DataFrame()
+    df["name"] = [info["name"].get(c, c) if len(info) else c for c in df.index]
+    df["market"] = [info["market"].get(c, "") if len(info) else "" for c in df.index]
+    return df.reset_index(), day
+
+
 def is_open(now=None) -> bool:
     """한국 정규장(평일 9:00~15:30) 여부. 공휴일은 네이버 marketStatus로 따로 확인해요."""
     t = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
@@ -224,6 +267,8 @@ def fmt_eok(x: float | None) -> str:
     """억원 → '+1.2조' / '-3,456억'"""
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return "–"
-    sign = "+" if x > 0 else "-" if x < 0 else ""
     a = abs(x)
+    if a < 0.5:
+        return "0억"
+    sign = "+" if x > 0 else "-"
     return f"{sign}{a / 10000:.1f}조" if a >= 10000 else f"{sign}{a:,.0f}억"

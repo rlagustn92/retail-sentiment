@@ -257,6 +257,22 @@ def kr_members(mem) -> str:
 <table class="ftab"><thead><tr><th></th><th>외국인</th><th>기관</th><th>개인</th></tr></thead><tbody>{''.join(rows)}</tbody></table>""")
 
 
+def kr_rank(df, who: str, side: str, day) -> str:
+    if df is None or df.empty:
+        return flat('<div class="empty">데이터를 못 받았어요</div>')
+    rows = []
+    for i, (_, r) in enumerate(df.iterrows(), 1):
+        ct, cc = _chg(r.get("chg"))
+        a, ac = _won(r[who])
+        b, bc = _won(r.get("five"))
+        rows.append(f'''<tr><th><span style="color:var(--faint);font-weight:700">{i}</span> {esc(r["name"])}
+<span style="color:var(--faint);font-size:11px">{esc(r.get("market", ""))}</span></th>
+<td style="color:{cc}">{ct}</td><td style="color:{ac}">{esc(a)}</td><td style="color:{bc}">{esc(b)}</td></tr>''')
+    d = f"{day.month}월 {day.day}일" if day is not None else ""
+    return flat(f"""<table class="ftab"><thead><tr><th>{esc(d)}</th><th>등락</th><th>그날</th><th>5일 합계</th></tr></thead>
+<tbody>{''.join(rows)}</tbody></table>""")
+
+
 def flow_card(flow: dict, inst) -> str:
     rows = []
     for r in flow.get("rows", []):

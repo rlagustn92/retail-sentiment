@@ -457,6 +457,16 @@ def c_kr_trends(slot: int):
     return kr.all_trends()
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def c_kr_universe(slot: int):
+    return kr.universe()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def c_kr_rank_trends(slot: int, codes: tuple):
+    return kr.all_trends(days=6, workers=16, codes=list(codes))
+
+
 def kr_slot(seconds: int) -> int:
     import time
     return int(time.time() // seconds)
@@ -540,6 +550,21 @@ def render_kr():
             with st.container(key="kr_sectors"):
                 st.markdown(ui.section("섹터별 수급 지도", f"큰손 매도 강도 높은 순 · {d.month}월 {d.day}일 · 눌러서 종목별 보기")
                             + ui.kr_tiles(secs_sorted), unsafe_allow_html=True)
+        with st.container(key="kr_rank"):
+            st.markdown(ui.section("누가 뭘 팔고 샀나", "코스피 시총 상위 200 + 코스닥 100 종목 · 그날 순매수(억원)"),
+                        unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            who_lbl = c1.segmented_control("누가", list(kr.INVESTORS.values()), default="외국인", key="kr_who",
+                                           label_visibility="collapsed") or "외국인"
+            side_lbl = c2.segmented_control("방향", ["순매도", "순매수"], default="순매도", key="kr_side",
+                                            label_visibility="collapsed") or "순매도"
+            who = next(k for k, v in kr.INVESTORS.items() if v == who_lbl)
+            names = safe(err, "종목 목록", c_kr_universe, kr_slot(6 * 3600), default=pd.DataFrame())
+            if names is not None and len(names):
+                rt = safe(err, "종목 수급", c_kr_rank_trends, kr_slot(600 if live else 3600),
+                          tuple(names["code"]), default=pd.DataFrame())
+                df, day = kr.rankings(rt, names, who, "sell" if side_lbl == "순매도" else "buy", 15)
+                st.markdown(ui.kr_rank(df, who, side_lbl, day), unsafe_allow_html=True)
     else:
         s = next((x for x in secs if x["key"] == KR_KEY), None)
         if s is None:
