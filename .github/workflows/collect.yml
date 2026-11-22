@@ -72,7 +72,9 @@ jobs:
           python collector.py "$MODE" --days "${{ github.event.inputs.days || '10' }}" --data data
 
       - name: data 브랜치에 저장
+        if: always()   # 수집이 중간에 실패해도 그때까지 계산한 건 저장
         run: |
+          [ -d data/.git ] || { echo "data 폴더 없음"; exit 0; }
           cd data
           git config user.name "collector-bot"
           git config user.email "collector-bot@users.noreply.github.com"

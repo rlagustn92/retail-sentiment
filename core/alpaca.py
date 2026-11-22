@@ -22,23 +22,37 @@ def iso(dt: datetime) -> str:
 
 
 class Alpaca:
-    def __init__(self, key: str, secret: str, timeout: int = 20, min_interval: float = 0.32):
+    def __init__(self, key: str, secret: str, timeout: int = 20, min_interval: float = 0.32, retries: int = 4):
         self.s = requests.Session()
         self.s.headers.update({"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret})
         self.timeout = timeout
         self.min_interval = min_interval  # 분당 200회 제한을 넘지 않게
+        self.retries = retries
         self._last = 0.0
 
     # ---- 공통 -------------------------------------------------------------
     def _get(self, url: str, params: dict | None = None) -> dict:
-        for attempt in range(4):
+        for attempt in range(self.retries):
             wait = self._last + self.min_interval - time.monotonic()
             if wait > 0:
                 time.sleep(wait)
             self._last = time.monotonic()
-            r = self.s.get(url, params=params, timeout=self.timeout)
-            if r.status_code == 429:  # 호출 제한: 잠깐 쉬고 다시
-                time.sleep(2 + attempt * 3)
+            try:
+                r = self.s.get(url, params=params, timeout=self.timeout)
+            except requests.RequestException:
+                if attempt == self.retries - 1:
+                    raise
+                time.sleep(3 + attempt * 3)
+                continue
+            if r.status_code == 429 or r.status_code >= 500:  # 호출 제한·서버 오류: 풀릴 때까지 쉬고 다시
+                pause = 3 + attempt * 4
+                reset = r.headers.get("X-RateLimit-Reset")
+                if reset:
+                    try:
+                        pause = max(pause, float(reset) - time.time() + 1)
+                    except ValueError:
+                        pass
+                time.sleep(min(pause, 65))
                 continue
             r.raise_for_status()
             return r.json()

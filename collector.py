@@ -62,8 +62,11 @@ def fill_retail(a: Alpaca, st: LocalStore, o: datetime, c: datetime, now: dateti
         b = rf.floor_bucket(o, config.BUCKET_MIN)
         while b + timedelta(minutes=config.BUCKET_MIN) <= end:
             if (pd.Timestamp(b), sym) not in have:
-                df = rf.compute_buckets(a, sym, b, b + timedelta(minutes=config.BUCKET_MIN), config.BUCKET_MIN)
-                parts.append(df.assign(sym=sym))
+                try:
+                    df = rf.compute_buckets(a, sym, b, b + timedelta(minutes=config.BUCKET_MIN), config.BUCKET_MIN)
+                    parts.append(df.assign(sym=sym))
+                except Exception as e:  # 이 구간만 건너뛰고 다음 실행 때 다시 채워요
+                    log("체결 계산 실패", sym, b, str(e)[:120])
             b += timedelta(minutes=config.BUCKET_MIN)
         if parts:
             st.append("retail", pd.concat(parts, ignore_index=True))
@@ -227,7 +230,8 @@ def main():
     key, secret = os.environ.get("ALPACA_KEY"), os.environ.get("ALPACA_SECRET")
     if not key or not secret:
         sys.exit("ALPACA_KEY / ALPACA_SECRET 환경변수가 필요해요")
-    a = Alpaca(key, secret)
+    # 수집기는 앱과 같은 키를 나눠 써요: 조금 느리게(분당 ~170회), 한도에 걸리면 더 오래 기다리며 재시도
+    a = Alpaca(key, secret, min_interval=0.36, retries=10)
     st = LocalStore(args.data)
     now = datetime.now(timezone.utc)
 
