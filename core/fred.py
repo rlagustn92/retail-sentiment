@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import io
+import time
 from datetime import date
 
 import pandas as pd
 import requests
 
-UA = {"User-Agent": "Mozilla/5.0 (retail-sentiment dashboard)"}
+UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/130.0 Safari/537.36", "Accept": "text/csv,*/*"}
 API = "https://api.stlouisfed.org/fred/series/observations"
 CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 COLS = ["date", "series", "value"]
@@ -28,13 +30,25 @@ def parse_csv(series_id: str, text: str) -> pd.DataFrame:
     return _frame(series_id, df[date_col], df[series_id])
 
 
+def _get(url: str, params: dict, headers: dict | None = None, tries: int = 3) -> requests.Response:
+    """FRED는 클라우드 서버에서 가끔 응답이 느려요. 시간 넉넉히, 몇 번 다시 시도."""
+    for i in range(tries):
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=(10, 90))
+            r.raise_for_status()
+            return r
+        except requests.RequestException:
+            if i == tries - 1:
+                raise
+            time.sleep(5 * (i + 1))
+    raise RuntimeError("unreachable")
+
+
 def series(series_id: str, start: date, key: str | None = None) -> pd.DataFrame:
     if key:
-        r = requests.get(API, params={"series_id": series_id, "api_key": key, "file_type": "json",
-                                      "observation_start": start.isoformat()}, timeout=30)
-        r.raise_for_status()
+        r = _get(API, {"series_id": series_id, "api_key": key, "file_type": "json",
+                       "observation_start": start.isoformat()})
         obs = r.json().get("observations", [])
         return _frame(series_id, [o["date"] for o in obs], [o["value"] for o in obs])  # 빈 값은 "."
-    r = requests.get(CSV, params={"id": series_id, "cosd": start.isoformat()}, headers=UA, timeout=30)
-    r.raise_for_status()
+    r = _get(CSV, {"id": series_id, "cosd": start.isoformat()}, headers=UA)
     return parse_csv(series_id, r.text)

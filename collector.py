@@ -4,8 +4,8 @@ python collector.py intraday           장중 15분마다: 개인 수급·Stockt
 python collector.py daily              장 마감 후: 남은 개인 수급 구간, 오늘 풋/콜 확정치, 오래된 기록 정리
 python collector.py backfill --days 10 처음 한 번: 과거 N거래일 개인 수급, 풋/콜, 뉴스 채우기
 
-환경변수: ALPACA_KEY, ALPACA_SECRET (필수), FINNHUB_KEY (있으면 뉴스 보충), FRED_KEY (없어도 됨)
-FINRA 장외 공매도·FRED 하이일드 스프레드는 키 없이 받아요. 빠진 날짜는 다음 실행 때 자동으로 채워요.
+환경변수: ALPACA_KEY, ALPACA_SECRET (필수), FINNHUB_KEY (있으면 뉴스 보충), FRED_KEY (권장, 없으면 키 없는 주소로 시도)
+FINRA 장외 공매도는 키 없이 받아요. 빠진 날짜는 다음 실행 때 자동으로 채워요.
 """
 from __future__ import annotations
 

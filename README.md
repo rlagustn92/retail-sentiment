@@ -37,7 +37,8 @@
 
 **키·토큰이 들어 있는 곳** (값은 어디에도 적지 않아요)
 - GitHub 저장소 Secrets: `ALPACA_KEY`, `ALPACA_SECRET` (모의계좌 키, 수집기용), `FINNHUB_KEY` (뉴스 보충, 없으면 건너뜀)
-  - Finnhub 키는 저장소 폴더의 **`키등록.cmd`를 더블클릭**해서 붙여넣으면 돼요. FRED·FINRA는 키가 필요 없어요.
+  - `FRED_KEY` (하이일드 스프레드, 없으면 키 없는 주소로 시도하지만 자주 막혀요)
+  - Finnhub·FRED 키는 저장소 폴더의 **`키등록.cmd`를 더블클릭**해서 붙여넣으면 돼요. FINRA는 키가 필요 없어요.
 - Streamlit Secrets: `ALPACA_KEY`, `ALPACA_SECRET`, `GH_REPO`, `GH_TOKEN`, `DATA_BRANCH`
   - `GH_TOKEN`은 공개 저장소 읽기 전용 토큰이에요. 공개 저장소라도 GitHub 요청 한도 때문에 넣어 둬요. 만료되면 새로 만들어 Streamlit Secrets 값만 바꾸면 돼요.
 
@@ -86,7 +87,7 @@ git fetch origin data          # 수집 기록 받기 (git show origin/data:scor
 | VIX/VIX3M | 1을 넘으면 단기 패닉 (지수 그룹만) | 15분 | 10 |
 | 풋/콜 비율 | 미국 주식 옵션의 하락 베팅 ÷ 상승 베팅 (지수 그룹만) | 30분 | 5 |
 | 장외 공매도 비율 | FINRA가 공개하는 장외 체결 중 공매도 비율. 개인이 사면 증권사가 공매도로 대주기 때문에 **평소보다 낮을수록 개인 매도** | 하루 1번 (전일) | 5 |
-| 하이일드 스프레드 | 신용 낮은 회사채 금리 − 국채 금리 (FRED). 벌어질수록 시장 전체 공포 (지수 그룹만) | 하루 늦게 | 5 |
+| 하이일드 스프레드 | 신용 낮은 회사채 금리 − 국채 금리 (FRED, `FRED_KEY` 권장). 벌어질수록 시장 전체 공포 (지수 그룹만) | 하루 늦게 | 5 |
 | 악재 뉴스 | 최근 1시간 그룹 종목 뉴스 건수와 악재 비율 (알파카 + Finnhub, 투매 점수와 별도) | 실시간 | – |
 
 해당 없는 지표는 빠지고, 남은 지표의 가중치로 100점 환산해요.
@@ -175,7 +176,7 @@ core/
   realtime.py          IEX 실시간 거래량 추정, 종목 전반 투매
   cboe.py              VIX, 풋/콜
   finra.py             FINRA 장외 공매도 (키 없음)
-  fred.py              FRED 하이일드 스프레드 (키 없어도 됨)
+  fred.py              FRED 하이일드 스프레드 (FRED_KEY 권장)
   finnhub.py           Finnhub 뉴스 보충 (수집기만)
   stocktwits.py        Stocktwits 심리
   news.py              뉴스 수치화
@@ -185,5 +186,5 @@ core/
   store.py             기록 읽기/쓰기
 .github/workflows/collect.yml   수집 일정
 tests/                 테스트 (python -m pytest -q)
-키등록.cmd             Finnhub 키를 GitHub Secrets에 넣는 더블클릭 파일 (tools/set-keys.ps1)
+키등록.cmd             Finnhub·FRED 키를 GitHub Secrets에 넣는 더블클릭 파일 (tools/set-keys.ps1)
 ```
