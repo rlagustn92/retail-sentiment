@@ -40,7 +40,7 @@
 **키·토큰이 들어 있는 곳** (값은 어디에도 적지 않아요)
 - GitHub 저장소 Secrets: `ALPACA_KEY`, `ALPACA_SECRET` (모의계좌 키, 수집기용), `FINNHUB_KEY` (뉴스 보충, 없으면 건너뜀)
   - `FRED_KEY` (하이일드 스프레드, 없으면 키 없는 주소로 시도하지만 자주 막혀요)
-  - Finnhub·FRED 키는 저장소 폴더의 **`키등록.cmd`를 더블클릭**해서 붙여넣으면 돼요. FINRA는 키가 필요 없어요.
+  - Finnhub·FRED 키는 키를 복사(Ctrl+C)한 뒤 저장소 폴더의 **`키등록.cmd`를 더블클릭**하고 Enter만 누르면 돼요(클립보드에서 읽어요). FINRA는 키가 필요 없어요.
 - Streamlit Secrets: `ALPACA_KEY`, `ALPACA_SECRET`, `GH_REPO`, `GH_TOKEN`, `DATA_BRANCH`
   - `GH_TOKEN`은 공개 저장소 읽기 전용 토큰이에요. 공개 저장소라도 GitHub 요청 한도 때문에 넣어 둬요. 만료되면 새로 만들어 Streamlit Secrets 값만 바꾸면 돼요.
 
