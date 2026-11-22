@@ -257,6 +257,30 @@ def kr_members(mem) -> str:
 <table class="ftab"><thead><tr><th></th><th>외국인</th><th>기관</th><th>개인</th></tr></thead><tbody>{''.join(rows)}</tbody></table>""")
 
 
+def kr_history_card(c: dict, text: str) -> str:
+    items = [dict(r, now=False) for r in c["rows"]] + [{
+        "name": "지금", "date": c["date"], "big": c["big"], "personal": c["personal"], "mult": c["mult"] or 0,
+        "kospi": c["kospi"], "now": True}]
+    items.sort(key=lambda r: -(r["mult"] or 0))
+    mx = max([r["mult"] or 0 for r in items] + [1]) * 1.05
+    rows = []
+    for r in items:
+        m = r["mult"] or 0
+        sc = min(100.0, max(0.0, (m - 1) / 4 * 100))   # 1배=0, 5배 이상=100
+        col = level(sc)[1] if r["now"] else "var(--faint)"
+        w = max(2.0, min(100.0, m / mx * 100))
+        d = r["date"]
+        kc = "" if r.get("kospi") is None else f" · 코스피 {_chg(r['kospi'])[0]}"
+        rows.append(f"""<div class="hrow{' now' if r['now'] else ''}"><div class="n">{esc(r['name'])}
+<div style="font-size:11px;color:var(--faint);font-weight:600">{d.year % 100:02d}.{d.month:02d}.{d.day:02d} · 큰손 {esc(_won(r['big'])[0])} · 개인 {esc(_won(r['personal'])[0])}{esc(kc)}</div></div>
+<div class="bar"><i style="width:{w:.0f}%;background:{col}"></i></div>
+<div class="v" style="color:{col if r['now'] else 'var(--sub)'}">{m:.1f}배</div></div>""")
+    return flat(f"""<div class="sect">역사 속 지금 (한국)</div>
+<div class="sectsub">큰손(외국인+기관) 하루 순매도 강도 = 그날 순매도 ÷ 직전 60거래일 평균 크기 · 시총 상위 300 종목 합</div>
+<div class="desc" style="font-size:15px;margin:2px 0 8px">{esc(text)}</div>{''.join(rows)}
+<div class="sectsub" style="margin-top:10px">시장 규모가 커져서 금액 대신 '평소의 몇 배'로 비교해요. 과거 폭락은 그 기간 중 큰손이 가장 세게 판 날이에요.</div>""")
+
+
 def kr_rank(df, who: str, side: str, day) -> str:
     if df is None or df.empty:
         return flat('<div class="empty">데이터를 못 받았어요</div>')

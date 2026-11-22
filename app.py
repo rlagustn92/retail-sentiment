@@ -535,7 +535,9 @@ def render_kr():
             mk.append(kr.market_summary(x, safe(err, "기록", c_store, "kr_market", default=pd.DataFrame())))
     live = any(x.get("status") == "OPEN" for x in mk)
     trends = safe(err, "섹터 수급", c_kr_trends, kr_slot(300 if live else 1800), default=pd.DataFrame())
-    secs = [s for s in (kr.sector_summary(k, trends) for k in kr.SECTORS) if s] if trends is not None and len(trends) else []
+    hist_sec = safe(err, "과거 기록", c_store, "kr_hist_sector", default=pd.DataFrame())
+    secs = ([s for s in (kr.sector_summary(k, trends, hist_sec) for k in kr.SECTORS) if s]
+            if trends is not None and len(trends) else [])
     now_kst = pd.Timestamp.now(tz=KST)
     st.markdown(ui.top(now_kst.strftime("%H:%M 업데이트"), live), unsafe_allow_html=True)
     items = [("all", "전체", None)] + [(s["key"], s["name"], s["big_score"]) for s in secs]
@@ -552,6 +554,11 @@ def render_kr():
                 if ch is not None:
                     st.markdown(ui.section("코스피 장중 누적 순매수", "10분마다 기록 · 억원"), unsafe_allow_html=True)
                     st.altair_chart(ch, width="stretch")
+        hc = kr.history_compare(safe(err, "과거 기록", c_store, "kr_hist_market", default=pd.DataFrame()),
+                                safe(err, "과거 기록", c_store, "kr_index", default=pd.DataFrame()))
+        if hc:
+            with st.container(key="kr_history"):
+                st.markdown(ui.kr_history_card(hc, kr.history_text(hc)), unsafe_allow_html=True)
         if secs:
             secs_sorted = sorted(secs, key=lambda s: -(s["big_score"] if s["big_score"] is not None else -1))
             d = secs[0]["date"]
@@ -564,8 +571,10 @@ def render_kr():
             st.markdown(ui.section("누가 뭘 팔고 샀나", "코스피 시총 상위 200 + 코스닥 100 종목 · 그날 순매수(억원)" if kind == "종목"
                                    else "시가총액 상위 ETF 150개 · 그날 순매수(억원)"), unsafe_allow_html=True)
             c1, c2 = st.columns(2)
-            who_lbl = c1.segmented_control("누가", list(kr.INVESTORS.values()), default="외국인", key="kr_who",
+            who_opts = ["외국인", "기관(LP 섞임)" if kind == "ETF" else "기관", "개인"]
+            who_lbl = c1.segmented_control("누가", who_opts, default="외국인", key=f"kr_who_{kind}",
                                            label_visibility="collapsed") or "외국인"
+            who_lbl = who_lbl.split("(")[0]
             side_lbl = c2.segmented_control("방향", ["순매도", "순매수"], default="순매도", key="kr_side",
                                             label_visibility="collapsed") or "순매도"
             who = next(k for k, v in kr.INVESTORS.items() if v == who_lbl)

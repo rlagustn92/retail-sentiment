@@ -88,7 +88,27 @@ def index_now(market: str) -> dict:
 
 def stock_trend(code: str, days: int = 60) -> pd.DataFrame:
     """종목별 일별 투자자 순매수 → 억원 (주식수 × 그날 종가)"""
-    rows = _get(f"stock/{code}/trend", {"pageSize": days})
+    return _trend_frame(code, _get(f"stock/{code}/trend", {"pageSize": days}))
+
+
+def stock_history(code: str, since, max_pages: int = 40) -> pd.DataFrame:
+    """since까지 거슬러 올라가며 60거래일씩 받아요 (네이버 bizdate=그 날짜 이전 60거래일)"""
+    rows, bizdate = [], None
+    for _ in range(max_pages):
+        params = {"pageSize": 60} | ({"bizdate": bizdate} if bizdate else {})
+        page = _get(f"stock/{code}/trend", params)
+        if not page:
+            break
+        rows += page
+        oldest = page[-1]["bizdate"]
+        if pd.Timestamp(oldest).date() <= since or oldest == bizdate:
+            break
+        bizdate = oldest
+    df = _trend_frame(code, rows)
+    return df[df["date"] >= since].drop_duplicates("date") if len(df) else df
+
+
+def _trend_frame(code: str, rows: list) -> pd.DataFrame:
     out = []
     for r in rows:
         close, diff = num(r.get("closePrice")), num(r.get("compareToPreviousClosePrice"))
@@ -123,6 +143,145 @@ def universe(kospi: int = 200, kosdaq: int = 100) -> pd.DataFrame:
                 break
             page += 1
     return pd.DataFrame(rows, columns=["code", "name", "market"])
+
+
+def index_history(market: str, since) -> pd.DataFrame:
+    """지수 일별 종가·등락률 (since 이후)"""
+    out = []
+    for page in range(1, 80):
+        rows = _get(f"index/{market}/price", {"pageSize": 60, "page": page})
+        if not rows:
+            break
+        for r in rows:
+            out.append({"date": pd.Timestamp(r["localTradedAt"]).date(), "market": MARKETS[market],
+                        "close": num(r.get("closePrice")), "chg": (num(r.get("fluctuationsRatio")) or 0) / 100})
+        if pd.Timestamp(rows[-1]["localTradedAt"]).date() < since:
+            break
+    df = pd.DataFrame(out, columns=["date", "market", "close", "chg"])
+    return df[df["date"] >= since].drop_duplicates(["date", "market"]) if len(df) else df
+
+
+def build_history(since, workers: int = 8) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """(시장 합계, 섹터별, 지수) 일별 기록. 시장 합계 = 지금 시총 상위 300 종목의 합(코스피 200·코스닥 100)"""
+    u = universe()
+    codes = sorted(set(u["code"]) | {c for sct in SECTORS.values() for c in sct["members"]})
+
+    def one(c):
+        try:
+            return stock_history(c, since)
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(workers) as ex:
+        parts = [x for x in ex.map(one, codes) if x is not None and len(x)]
+    if not parts:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    t = pd.concat(parts, ignore_index=True)
+    cols = ["foreign", "inst", "personal"]
+    tu = t.merge(u[["code", "market"]], on="code")
+    mk = tu.groupby(["date", "market"])[cols].sum()
+    mk["n"] = tu.groupby(["date", "market"])["code"].nunique()
+    allm = tu.groupby("date")[cols].sum()
+    allm["n"] = tu.groupby("date")["code"].nunique()
+    allm["market"] = "전체"
+    market = pd.concat([mk.reset_index(), allm.reset_index()], ignore_index=True)
+    secs = []
+    for key, sct in SECTORS.items():
+        x = t[t["code"].isin(sct["members"])]
+        if x.empty:
+            continue
+        g = x.groupby("date")[cols].sum()
+        g["chg"] = x.groupby("date")["chg"].mean()
+        g["sector"] = key
+        secs.append(g.reset_index())
+    sector = pd.concat(secs, ignore_index=True) if secs else pd.DataFrame()
+    idx = []
+    for m in MARKETS:
+        try:
+            idx.append(index_history(m, since))
+        except Exception:
+            pass
+    index = pd.concat(idx, ignore_index=True) if idx else pd.DataFrame()
+    for df in (market, sector, index):
+        if len(df):
+            df["date"] = pd.to_datetime(df["date"]).dt.tz_localize("UTC")
+    return market, sector, index
+
+
+# 한국 과거 폭락: 그 기간 큰손 순매도가 가장 셌던 날과 비교
+KR_EVENTS = [
+    ("2020 코로나 폭락", "2020-02-20", "2020-03-31"),
+    ("2022 금리 인상 하락장", "2022-01-01", "2022-10-31"),
+    ("2024 8월 블랙먼데이", "2024-08-01", "2024-08-09"),
+    ("2024 12월 계엄 사태", "2024-12-03", "2024-12-20"),
+    ("2025 4월 관세 쇼크", "2025-04-01", "2025-04-15"),
+]
+
+
+def _naive_dates(s: pd.Series) -> pd.Series:
+    d = pd.to_datetime(s)
+    return d.dt.tz_localize(None) if d.dt.tz is not None else d
+
+
+def history_compare(hist_market: pd.DataFrame, index: pd.DataFrame | None, market: str = "전체") -> dict | None:
+    """가장 최근 거래일 큰손 순매도를 과거와 비교. 금액은 시대마다 커져서 '평소(직전 60거래일 평균 크기)의 몇 배'로 봐요"""
+    if hist_market is None or hist_market.empty or "market" not in hist_market:
+        return None
+    h = hist_market[hist_market["market"] == market].copy()
+    if len(h) < 80:
+        return None
+    h["date"] = _naive_dates(h["date"])
+    h = h.sort_values("date").drop_duplicates("date", keep="last").set_index("date")
+    h["big"] = h["foreign"] + h["inst"]
+    scale = h["big"].abs().rolling(60, min_periods=40).mean().shift(1)
+    h["mult"] = -h["big"] / scale                       # +면 평소보다 몇 배 세게 팔았나
+    h["big5"] = h["big"].rolling(5).sum()
+    h["kospi"] = np.nan
+    if index is not None and len(index) and "market" in index:
+        ix = index[index["market"] == "코스피"].copy()
+        ix["date"] = _naive_dates(ix["date"])
+        h["kospi"] = ix.drop_duplicates("date").set_index("date")["chg"].reindex(h.index)
+    cur = h.iloc[-1]
+    rows = []
+    for name, a, b in KR_EVENTS:
+        w = h[(h.index >= a) & (h.index <= b)].dropna(subset=["mult"])
+        if w.empty:
+            continue
+        d = w["mult"].idxmax()
+        r = w.loc[d]
+        rows.append({"name": name, "date": d, "big": float(r["big"]), "personal": float(r["personal"]),
+                     "mult": float(r["mult"]), "kospi": None if pd.isna(r["kospi"]) else float(r["kospi"]),
+                     "big5": float(w["big5"].min())})
+    valid = h["mult"].dropna()
+    pct = float((valid < cur["mult"]).mean() * 100) if len(valid) and not pd.isna(cur["mult"]) else None
+    return {"date": h.index[-1], "big": float(cur["big"]), "personal": float(cur["personal"]),
+            "foreign": float(cur["foreign"]), "inst": float(cur["inst"]),
+            "mult": None if pd.isna(cur["mult"]) else float(cur["mult"]), "big5": float(cur["big5"]),
+            "kospi": None if pd.isna(cur["kospi"]) else float(cur["kospi"]), "pct": pct,
+            "since": int(h.index.min().year), "rows": rows}
+
+
+def history_text(c: dict) -> str:
+    if not c:
+        return ""
+    d = c["date"]
+    s = f"{d.month}월 {d.day}일 큰손(외국인+기관) 순매수는 {fmt_eok(c['big'])}"
+    if c["mult"] is not None and c["mult"] > 0:
+        s += f"로, 평소의 {c['mult']:.1f}배 강도로 팔았어요"
+        if c["pct"] is not None:
+            top = 100 - c["pct"]
+            s += f" ({c['since']}년 이후 상위 {top:.0f}%)" if top >= 1 else f" ({c['since']}년 이후 가장 센 1% 안)"
+        s += "."
+    else:
+        s += "로, 매도 쪽이 아니에요."
+    s += f" 그날 개인은 {fmt_eok(c['personal'])}."
+    if c["mult"] and c["mult"] > 0 and c["rows"]:
+        worse = [r["name"] for r in c["rows"] if r["mult"] > c["mult"]]
+        if worse:
+            s += " 과거 폭락 중 " + ", ".join(f"'{n}'" for n in worse) + "의 최악의 날보다는 약해요."
+        else:
+            s += " 아래 과거 폭락들의 최악의 날보다도 세요."
+    return s
 
 
 def etf_universe(n: int = 150) -> pd.DataFrame:
@@ -184,12 +343,14 @@ def side(net: float | None, sell_score: float | None, big: float | None = None) 
 
 
 def verdict(big_side: str | None, retail_side: str | None, foreign: float | None, inst: float | None,
-            foreign_sell_days: int | None = None, ndays: int = 5, big_score: float | None = None) -> tuple[str, str]:
+            foreign_sell_days: int | None = None, ndays: int = 5, big_score: float | None = None,
+            base_days: int = 60) -> tuple[str, str]:
     if big_side is None and retail_side is None:
         return "수급 데이터를 기다리는 중", "장이 열리면 계산돼요."
     title, desc = KR_TEXT[(big_side or "flat", retail_side or "flat")]
     if big_score is not None and big_side == "sell":
-        desc += f" 큰손 매도 강도는 최근 60거래일 중 상위 {max(1, round(100 - big_score))}%예요."
+        span = "최근 1년" if base_days >= 200 else f"최근 {base_days}거래일"
+        desc += f" 큰손 매도 강도는 {span} 중 상위 {max(1, round(100 - big_score))}%예요."
     if big_side == "sell" and foreign is not None and inst is not None and foreign < 0 and inst < 0:
         lead = "외국인" if foreign < inst else "기관"
         desc += f" 매도는 {lead}이 더 커요."
@@ -205,7 +366,7 @@ def _score_series(today: float | None, hist: list[float]) -> float | None:
     return percentile(-today, [-x for x in hist])
 
 
-def sector_summary(key: str, trends: pd.DataFrame) -> dict | None:
+def sector_summary(key: str, trends: pd.DataFrame, hist_sector: pd.DataFrame | None = None) -> dict | None:
     sec = SECTORS[key]
     t = trends[trends["code"].isin(sec["members"])] if not trends.empty else trends
     if t.empty:
@@ -214,17 +375,25 @@ def sector_summary(key: str, trends: pd.DataFrame) -> dict | None:
     daily["big"] = daily["foreign"] + daily["inst"]
     day = daily.index.max()
     cur, hist = daily.loc[day], daily.iloc[:-1].tail(60)
+    base_days = len(hist)
+    if hist_sector is not None and len(hist_sector) and "sector" in hist_sector:
+        hs = hist_sector[hist_sector["sector"] == key].copy()
+        hs["date"] = pd.to_datetime(hs["date"]).dt.date
+        hs = hs[hs["date"] < day].drop_duplicates("date", keep="last").sort_values("date").tail(250)
+        if len(hs) >= 120:  # 과거 기록이 있으면 최근 1년(약 250거래일)을 기준치로
+            hs["big"] = hs["foreign"] + hs["inst"]
+            hist, base_days = hs.set_index("date"), len(hs)
     big_sc = _score_series(float(cur["big"]), hist["big"].tolist())
     ret_sc = _score_series(float(cur["personal"]), hist["personal"].tolist())
     last5 = daily.tail(5)
     fsd = int((last5["foreign"] < 0).sum())
     title, desc = verdict(side(float(cur["big"]), big_sc), side(float(cur["personal"]), ret_sc),
-                          float(cur["foreign"]), float(cur["inst"]), fsd, len(last5), big_sc)
+                          float(cur["foreign"]), float(cur["inst"]), fsd, len(last5), big_sc, base_days)
     mem = t[t["date"] == day].copy()
     mem["name"] = mem["code"].map(sec["members"])
     mem5 = t[t["date"].isin(last5.index)].groupby("code")[["foreign", "inst", "personal"]].sum()
     mem = mem.join(mem5.add_suffix("_5d"), on="code").sort_values("chg", na_position="last")
-    return {"key": key, "name": sec["name"], "date": day, "foreign": float(cur["foreign"]), "inst": float(cur["inst"]),
+    return {"key": key, "name": sec["name"], "date": day, "base_days": base_days, "foreign": float(cur["foreign"]), "inst": float(cur["inst"]),
             "personal": float(cur["personal"]), "big": float(cur["big"]), "big_score": big_sc, "retail_score": ret_sc,
             "five": {c: float(last5[c].sum()) for c in ("foreign", "inst", "personal", "big")},
             "foreign_sell_days": fsd, "ndays": len(last5),

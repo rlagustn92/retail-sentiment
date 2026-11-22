@@ -289,3 +289,36 @@ def test_kr_rankings():
     assert list(df["name"]) == ["다", "가"] and df["five"].iloc[0] == -1500 and str(day) == "2026-11-20"
     df, _ = kr.rankings(pd.DataFrame(rows), names, "personal", "buy", 5)
     assert list(df["name"]) == ["다", "가"]
+
+
+def test_kr_stock_history_pages(monkeypatch):
+    days = [d for d in pd.bdate_range("2026-01-01", "2026-11-20")][::-1]          # 최신 → 과거
+
+    def fake_get(path, params=None):
+        bd = params.get("bizdate")
+        pool = [d for d in days if bd is None or d.strftime("%Y%m%d") < bd][:60]
+        return [{"bizdate": d.strftime("%Y%m%d"), "foreignerPureBuyQuant": "-1", "organPureBuyQuant": "0",
+                 "individualPureBuyQuant": "+1", "closePrice": "100,000,000", "compareToPreviousClosePrice": "0"}
+                for d in pool]
+
+    monkeypatch.setattr(kr, "_get", fake_get)
+    df = kr.stock_history("005930", pd.Timestamp("2026-03-02").date())
+    assert df["date"].min() == pd.Timestamp("2026-03-02").date() and df["date"].is_unique
+    assert len(df) == len([d for d in days if d >= pd.Timestamp("2026-03-02")])
+
+
+def test_kr_history_compare():
+    dates = pd.bdate_range("2019-12-02", "2026-11-20")
+    big = pd.Series(-100.0, index=dates)
+    big[::2] = 100.0                                   # 평소 크기 100억
+    big[pd.Timestamp("2020-03-12")] = -900             # 코로나: 평소의 9배
+    big[pd.Timestamp("2024-08-05")] = -500             # 블랙먼데이: 5배
+    big[dates[-1]] = -600                              # 지금: 6배
+    hm = pd.DataFrame({"date": dates, "market": "전체", "foreign": big * 0.5, "inst": big * 0.5, "personal": -big, "n": 300})
+    ix = pd.DataFrame({"date": dates, "market": "코스피", "close": 1.0, "chg": -0.01})
+    c = kr.history_compare(hm, ix)
+    names = {r["name"]: r for r in c["rows"]}
+    assert round(names["2020 코로나 폭락"]["mult"]) == 9 and round(names["2024 8월 블랙먼데이"]["mult"]) == 5
+    assert round(c["mult"]) == 6 and c["pct"] > 99 and c["kospi"] == -0.01
+    t = kr.history_text(c)
+    assert "평소의 6.0배" in t and "'2020 코로나 폭락'의 최악의 날보다는 약해요" in t
