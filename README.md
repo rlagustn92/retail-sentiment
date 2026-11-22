@@ -25,6 +25,32 @@
 
 ---
 
+## 내 배포 정보
+
+| 항목 | 위치 |
+|---|---|
+| 앱 주소 | https://tusimcheck.streamlit.app |
+| 코드 | https://github.com/rlagustn92/retail-sentiment (공개, `main` 브랜치) |
+| 수집 기록 | 같은 저장소의 `data` 브랜치 (CSV: retail_flow, putcall, stocktwits, score, news) |
+| 수집기 | Actions → **collect** (평일 한국시간 밤 10시~아침 6시 15분마다, 아침 6시 40분 마감 정리) |
+| 화면 설정 | share.streamlit.io → tusimcheck → Settings (Python 3.12, Secrets) |
+
+**키·토큰이 들어 있는 곳** (값은 어디에도 적지 않아요)
+- GitHub 저장소 Secrets: `ALPACA_KEY`, `ALPACA_SECRET` (모의계좌 키, 수집기용)
+- Streamlit Secrets: `ALPACA_KEY`, `ALPACA_SECRET`, `GH_REPO`, `GH_TOKEN`, `DATA_BRANCH`
+  - `GH_TOKEN`은 공개 저장소 읽기 전용 토큰이에요. 공개 저장소라도 GitHub 요청 한도 때문에 넣어 둬요. 만료되면 새로 만들어 Streamlit Secrets 값만 바꾸면 돼요.
+
+**다른 PC에서 이어서 작업하기**
+```bash
+git clone https://github.com/rlagustn92/retail-sentiment.git
+cd retail-sentiment
+git fetch origin data          # 수집 기록 받기 (git show origin/data:score.csv 처럼 열어봐요)
+```
+- 코드를 고치기 전엔 `git pull`로 최신 상태를 받아요. `main`에 푸시하면 Streamlit 앱이 자동으로 다시 배포돼요.
+- 앱과 수집기가 같은 알파카 키를 써서 분당 200회 한도를 나눠 써요. 백필이 도는 동안에는 앱이 느려요.
+
+---
+
 ## 화면 읽는 법
 
 **맨 위 숫자 = 투매 지수 (0~100)**
