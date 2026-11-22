@@ -1,0 +1,73 @@
+# 기록 수집: 장중 15분마다 + 장 마감 후 1번. 결과는 data 브랜치에 CSV로 쌓입니다.
+# 처음 한 번은 Actions 탭 → collect → Run workflow → mode: backfill 로 과거 기록을 채우세요 (15개 그룹이라 1시간 안팎 걸려요).
+name: collect
+
+on:
+  schedule:
+    - cron: "*/15 13-21 * * 1-5"   # 미국 정규장 (서머타임 여부와 관계없이 커버)
+    - cron: "40 21 * * 1-5"        # 장 마감 후 정리
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "intraday / daily / backfill"
+        default: backfill
+        type: choice
+        options: [backfill, intraday, daily]
+      days:
+        description: "backfill 할 거래일 수"
+        default: "10"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements-collector.txt
+
+      - name: data 브랜치 가져오기 (없으면 새로 만듦)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$URL" data > /dev/null; then
+            git clone --depth 1 --branch data "$URL" data
+          else
+            mkdir -p data && cd data && git init -b data && git remote add origin "$URL"
+          fi
+
+      - name: 수집
+        env:
+          ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
+          ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MODE="${{ github.event.inputs.mode }}"
+          elif [ "${{ github.event.schedule }}" = "40 21 * * 1-5" ]; then
+            MODE=daily
+          else
+            MODE=intraday
+          fi
+          python collector.py "$MODE" --days "${{ github.event.inputs.days || '10' }}" --data data
+
+      - name: data 브랜치에 저장
+        run: |
+          cd data
+          git config user.name "collector-bot"
+          git config user.email "collector-bot@users.noreply.github.com"
+          git add -A
+          git commit -m "data $(date -u +%Y-%m-%dT%H:%MZ)" || { echo "변경 없음"; exit 0; }
+          git push origin data
