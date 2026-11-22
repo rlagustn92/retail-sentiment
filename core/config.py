@@ -97,6 +97,15 @@ def all_symbols() -> list[str]:
     return sorted(s)
 
 
+def trade_symbols() -> list[str]:
+    """체결 데이터로 개인·기관 수급을 계산할 종목: 레버리지(개인용) + 대표 ETF(기관용)"""
+    return sorted({g["flow"] for g in GROUPS.values()} | {g["etf"] for g in GROUPS.values()})
+
+
+def etf_symbols() -> list[str]:
+    return sorted({g["etf"] for g in GROUPS.values()})
+
+
 def social_symbols() -> list[str]:
     return sorted({g["social"] for g in GROUPS.values() if g.get("social")})
 
@@ -116,6 +125,7 @@ WEIGHTS = {
     "inverse": 10,  # 인버스 갈아타기
     "vix": 10,      # VIX/VIX3M (지수 그룹만)
     "putcall": 5,   # 주식 풋/콜 (지수 그룹만)
+    "retail_etf": 10,  # 대표 ETF(SOXX 등)의 개인 순매도 (레버리지와 다를 때만)
     "short": 5,     # FINRA 장외 공매도 비율 (전일, 낮을수록 개인 매도)
     "credit": 5,    # 하이일드 채권 스프레드 (FRED, 지수 그룹만)
 }
@@ -137,7 +147,13 @@ FALLBACK_SCALE = {
     "news_count": (1.0, 3.0),
     "news_neg": (0.15, 0.5),
     "credit": (3.0, 6.0),
+    "inst": (0.0, 0.35),
 }
+
+# 기관 매도 지수: 대표 ETF 대량 체결(20만 달러 이상)의 순매도 비율로 따로 계산 (투매 지수와 별개)
+# 수급 판정: 순매도 비율이 이 값보다 크고 백분위 점수도 높으면 '매도', 반대면 '매수'
+FLOW_SIDE_RATIO = 0.05
+FLOW_SIDE_SCORE = (40, 60)   # (이하면 매수 쪽, 이상이면 매도 쪽)
 
 # 종목 전반 투매: 이 정도 빠지면서 거래량이 이만큼 터진 종목 비율
 BREADTH_DROP = -0.02

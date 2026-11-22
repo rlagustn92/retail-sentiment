@@ -52,9 +52,11 @@ def fill_retail(a: Alpaca, st: LocalStore, o: datetime, c: datetime, now: dateti
     old = st.read("retail")
     have = set()
     if not old.empty:
-        have = set(zip(pd.to_datetime(old["bucket"], utc=True), old["sym"]))
+        etfs = old["sym"].isin(config.etf_symbols())
+        done = old[~etfs | old["inst_buy"].notna()] if "inst_buy" in old else old[~etfs]  # 대표 ETF는 기관 칸까지 있어야 완료
+        have = set(zip(pd.to_datetime(done["bucket"], utc=True), done["sym"]))
     total = 0
-    for sym in symbols or config.flow_symbols():
+    for sym in symbols or config.trade_symbols():
         parts = []
         b = rf.floor_bucket(o, config.BUCKET_MIN)
         while b + timedelta(minutes=config.BUCKET_MIN) <= end:

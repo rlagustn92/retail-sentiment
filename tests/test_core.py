@@ -164,3 +164,64 @@ def test_credit_indicator_only_for_index_groups():
     spx = build_group(m, "spx").indicators["credit"]
     assert spx.score > 95 and spx.display == "5.00%p"
     assert "credit" not in build_group(m, "semi").indicators
+
+
+# ---------------------------------------------------------------- 기관(대량 체결) 수급 · 누가 던지나 · 역사 비교
+from core import history
+from core.scoring import flow_verdict
+
+
+def test_classify_inst_tick_rule():
+    st = rf.TickState()
+    trades = [
+        {"p": 100.00, "s": 100, "c": ["@"]},            # 기준가
+        {"p": 100.10, "s": 3000, "c": ["@"]},           # 업틱 · 30만 달러 → 기관 매수
+        {"p": 100.10, "s": 2500, "c": ["@"]},           # 같은 가격 → 직전 방향(매수) 유지
+        {"p": 100.00, "s": 5000, "c": ["@", "F"]},      # 다운틱 · 50만 달러 → 기관 매도 (ISO 포함)
+        {"p": 99.00, "s": 9000, "c": ["6"]},            # 종가 단일가 → 제외 (가격도 기억 안 함)
+        {"p": 99.90, "s": 100, "c": ["@"]},             # 작은 체결: 방향만 갱신
+        {"p": 99.95, "s": 1000, "c": ["@"]},            # 10만 달러 → 기준 미달
+    ]
+    buy, sell, n = rf.classify_inst(trades, st)
+    assert (buy, sell, n) == (5500, 5000, 3)
+
+
+def test_compute_buckets_has_inst_columns():
+    s = datetime(2026, 11, 20, 14, 30, tzinfo=timezone.utc)
+    df = rf.compute_buckets(FakeAlpaca(), "SOXX", s, s + timedelta(minutes=30), 15)
+    assert list(df.columns) == rf.COLS and (df["inst_buy"] == 0).all()
+
+
+def test_flow_verdict_matrix():
+    t, _ = flow_verdict(0.30, 90, [-0.20], [10])
+    assert t == "기관이 던지고 개인이 받는 중"
+    t, _ = flow_verdict(0.30, 90, [0.20, 0.15], [90, 80])
+    assert t == "기관·개인 같이 던지는 중"
+    t, _ = flow_verdict(-0.30, 5, [0.20], [95])
+    assert t == "개인이 던지고 기관이 받는 중"
+    t, _ = flow_verdict(0.30, 90, [0.20, -0.20], [90, 10])               # 레버리지·본체가 엇갈리면 개인은 중립
+    assert t == "기관 주도 매도"
+    _, d = flow_verdict(0.30, 90, [-0.2], [10], (0.2, 5, 5))
+    assert "5일 중 5일 매도 우위" in d
+    assert flow_verdict(None, None, [], [])[0] == "수급 데이터를 기다리는 중"
+
+
+def test_demo_who_is_selling():
+    res = build_all(demo_market())
+    semi = res["semi"]
+    assert semi.inst is not None and semi.inst > 70 and semi.flow["rows"][0]["label"].startswith("기관 · SOXX")
+    assert "retail_etf" in semi.indicators and "retail_etf" not in res["comm"].indicators   # XLC는 본체=레버리지
+    assert market_summary(res)["inst"] is not None
+
+
+def test_history_compare():
+    idx = pd.bdate_range("2007-01-01", "2026-11-20")
+    vix = pd.Series(15.0, index=idx)
+    vix[pd.Timestamp("2008-11-20")] = 80.9
+    vix[pd.Timestamp("2020-03-16")] = 82.7
+    vix[pd.Timestamp("2018-12-24")] = 36.1
+    c = history.compare(vix, None, now_vix=36.0)
+    names = {r["name"]: r["vix"] for r in c["rows"]}
+    assert names["2020 코로나 폭락"] == 82.7 and names["2008 리먼 사태"] == 80.9
+    assert c["next_above"]["name"] == "2018 연말 급락" and c["pct"] > 99
+    assert "2018 연말 급락" in history.summary(c)

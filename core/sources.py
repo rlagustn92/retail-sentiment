@@ -117,14 +117,18 @@ def demo_market(seed: int = 7) -> MarketData:
     rrows = []
     for k, g in config.GROUPS.items():
         lvl = DEMO_INTENSITY[k]
-        for i, d in enumerate(days[-40:]):
-            last = d == last_day
-            for kk in range(n_today if last else 26):
-                b = (pd.Timestamp(d).tz_localize(ET) + pd.Timedelta(minutes=570 + 15 * kk)).tz_convert("UTC")
-                tot = 3e5 * (1 + rng.normal(0, 0.2))
-                tilt = rng.normal(0, 0.09) + ((0.16 * lvl - 0.05 + 0.006 * kk * lvl) if last else 0)
-                rrows.append({"bucket": b, "sym": g["flow"], "retail_buy": tot * (0.5 - tilt / 2),
-                              "retail_sell": tot * (0.5 + tilt / 2), "n": 900})
+        for sym in dict.fromkeys([g["flow"], g["etf"]]):
+            for i, d in enumerate(days[-40:]):
+                last = d == last_day
+                for kk in range(n_today if last else 26):
+                    b = (pd.Timestamp(d).tz_localize(ET) + pd.Timedelta(minutes=570 + 15 * kk)).tz_convert("UTC")
+                    tot = 3e5 * (1 + rng.normal(0, 0.2))
+                    tilt = rng.normal(0, 0.09) + ((0.16 * lvl - 0.05 + 0.006 * kk * lvl) if last else 0)
+                    itilt = rng.normal(0, 0.12) + ((0.35 * lvl - 0.05) if last else 0)  # 데모: 기관이 먼저 던짐
+                    rrows.append({"bucket": b, "sym": sym, "retail_buy": tot * (0.5 - tilt / 2),
+                                  "retail_sell": tot * (0.5 + tilt / 2), "n": 900,
+                                  "inst_buy": tot * 0.3 * (0.5 - itilt / 2), "inst_sell": tot * 0.3 * (0.5 + itilt / 2),
+                                  "n_inst": 40})
     retail = pd.DataFrame(rrows).drop_duplicates(["bucket", "sym"])
 
     rt_rows = []

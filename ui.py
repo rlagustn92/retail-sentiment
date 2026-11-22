@@ -43,6 +43,22 @@ header[data-testid="stHeader"],#MainMenu,footer,[data-testid="stToolbar"],[data-
 .desc{font-size:16px;color:var(--sub);line-height:1.55;margin-top:6px;font-weight:500;}
 .hr{height:1px;background:var(--line);margin:18px 0 14px;}
 .pair{display:flex;gap:10px;margin-bottom:6px;}
+.pair.three{gap:8px;}.pair.three .mini{padding:12px 10px 10px;min-width:0;}.pair.three .mini .v{font-size:20px;}
+.verdict{background:var(--chip);border-radius:14px;padding:12px 14px;margin:8px 0 10px;}
+.verdict .vt{font-size:18px;font-weight:800;letter-spacing:-0.4px;}
+.verdict .vd{font-size:14px;color:var(--sub);margin-top:4px;line-height:1.55;font-weight:500;}
+.ftab{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:4px;}
+.ftab th,.ftab td{padding:8px 3px;border-top:1px solid var(--line);text-align:right;font-weight:700;white-space:nowrap;}
+.ftab th:first-child{text-align:left;font-weight:600;color:var(--sub);white-space:normal;}
+.ftab thead th{font-size:12px;color:var(--faint);font-weight:600;border-top:none;padding-top:0;}
+.vrow{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line);}
+.vrow .a{font-size:15px;font-weight:700;}.vrow .b{font-size:13px;color:var(--sub);margin-top:2px;line-height:1.45;}
+.vrow .sc{font-size:20px;font-weight:800;white-space:nowrap;}
+.hrow{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 0;font-size:13px;}
+.hrow .n{font-weight:600;color:var(--sub);}.hrow.now .n{color:var(--text);font-weight:800;}
+.hrow .v{font-weight:800;text-align:right;min-width:34px;}
+.hrow .bar{height:8px;}
+.tile .q{font-size:12px;font-weight:700;margin-top:3px;color:var(--faint);}
 .mini{flex:1;background:var(--chip);border-radius:16px;padding:14px 14px 12px;}
 .mini .k{font-size:13px;color:var(--sub);font-weight:600;}
 .mini .v{font-size:22px;font-weight:800;letter-spacing:-0.5px;margin-top:4px;}
@@ -126,7 +142,78 @@ def top(updated: str, live: bool) -> str:
 <div class="live"><span class="dot{'' if live else ' off'}"></span>{esc(updated)}</div></div>""")
 
 
-def hero(panic, head, desc, price, chg, bad, session, drivers=None, title="", etf="", flow="", flow_chg=None) -> str:
+def inst_level(s) -> tuple[str, str]:
+    """기관 매도 지수용 이름 (색은 신호등과 같게)"""
+    if s is None:
+        return "데이터 없음", "var(--faint)"
+    _, color = level(s)
+    return ("매우 높음" if s >= 70 else "높음" if s >= 40 else "보통"), color
+
+
+def _side(x) -> tuple[str, str]:
+    """순매도 비율(+면 매도) → 글자, 색 (매도 파랑 · 매수 빨강)"""
+    if x is None or x != x:
+        return "–", "var(--faint)"
+    if abs(x) < 0.005:
+        return "균형", "var(--sub)"
+    return (f"매도 {abs(x) * 100:.0f}%", "var(--down)") if x > 0 else (f"매수 {abs(x) * 100:.0f}%", "var(--up)")
+
+
+def flow_card(flow: dict, inst) -> str:
+    rows = []
+    for r in flow.get("rows", []):
+        cells = "".join(f'<td style="color:{_side(r[k])[1]}">{esc(_side(r[k])[0])}</td>' for k in ("now", "day", "five"))
+        rows.append(f'<tr><th>{esc(r["label"])}</th>{cells}</tr>')
+    nm, col = inst_level(inst)
+    sc = "" if inst is None else f' · 기관 매도 지수 <b style="color:{col}">{inst:.0f}</b> ({esc(nm)})'
+    return flat(f"""<div class="sect">누가 던지고 누가 받나</div>
+<div class="sectsub">20만 달러 넘는 대량 체결 = 기관·큰손 추정{sc}</div>
+<div class="verdict"><div class="vt">{esc(flow.get("title", ""))}</div><div class="vd">{esc(flow.get("desc", ""))}</div></div>
+<table class="ftab"><thead><tr><th></th><th>최근 1시간</th><th>오늘</th><th>최근 5일</th></tr></thead>
+<tbody>{''.join(rows)}</tbody></table>
+<div class="sectsub" style="margin-top:6px">아래 선: 1시간 순매수 흐름 (+ 매수 우위 · − 매도 우위) · 15분 지연</div>""")
+
+
+def flow_summary(results, inst_hot) -> str:
+    rows = []
+    for r in results:
+        nm, col = inst_level(r.inst)
+        val = "–" if r.inst is None else f"{r.inst:.0f}"
+        rows.append(f"""<a class="vrow" href="?g={r.key}" target="_self" style="text-decoration:none;color:inherit">
+<div><div class="a">{esc(r.name)} · {esc(r.flow.get("title", ""))}</div><div class="b">{esc(r.flow.get("desc", ""))}</div></div>
+<div style="text-align:right"><div class="sc" style="color:{col}">{val}</div><div class="b">기관 매도</div></div></a>""")
+    hot = ""
+    if inst_hot:
+        hot = ('<div class="label" style="margin-top:12px">기관 매도가 큰 섹터</div><div class="drv">' + "".join(
+            f'<span>{esc(h.name)} <b style="color:{inst_level(h.inst)[1]}">{h.inst:.0f}</b></span>' for h in inst_hot)
+               + "</div>")
+    return flat(f"""<div class="sect">누가 던지고 누가 받나</div>
+<div class="sectsub">대표 ETF 대량 체결(기관·큰손) vs 개인 · 기관 매도 지수 0~100 · 눌러서 자세히</div>
+{''.join(rows)}{hot}""")
+
+
+def history_card(c: dict, text: str) -> str:
+    mx = c["max"] * 1.05
+    items = [dict(r, now=False) for r in c["rows"]] + [{"name": "지금", "vix": c["now"], "ratio": c.get("now_ratio"),
+                                                       "now": True}]
+    items.sort(key=lambda r: -r["vix"])
+    rows = []
+    for r in items:
+        sc = min(100.0, max(0.0, (r["vix"] - 12) / (50 - 12) * 100))
+        col = level(sc)[1] if r["now"] else "var(--faint)"
+        w = max(2.0, min(100.0, r["vix"] / mx * 100))
+        rt = "" if not r.get("ratio") else f" · {r['ratio']:.2f}"
+        rows.append(f"""<div class="hrow{' now' if r['now'] else ''}"><div class="n">{esc(r['name'])}</div>
+<div class="bar"><i style="width:{w:.0f}%;background:{col}"></i></div>
+<div class="v" style="color:{col if r['now'] else 'var(--sub)'}">{r['vix']:.0f}<span style="font-weight:600;color:var(--faint);font-size:11px">{esc(rt)}</span></div></div>""")
+    return flat(f"""<div class="sect">역사 속 지금</div>
+<div class="sectsub">과거 폭락 때 VIX 종가 최고치와 비교 · 작은 숫자는 VIX/VIX3M 최고치</div>
+<div class="desc" style="font-size:15px;margin:2px 0 8px">{esc(text)}</div>{''.join(rows)}
+<div class="sectsub" style="margin-top:10px">VIX 같은 시장 전체 공포는 시대가 달라도 비교할 만해요. 개인 수급은 수수료 무료화(2019)·개인 투자자 급증(2020)·0DTE 옵션 등으로 구조가 바뀌어 과거와 직접 비교하지 않아요.</div>""")
+
+
+def hero(panic, head, desc, price, chg, bad, session, drivers=None, title="", etf="", flow="", flow_chg=None,
+         inst=None) -> str:
     name, color = level(panic)
     val = "–" if panic is None else f"{panic:.0f}"
     w = 0 if panic is None else max(3, panic)
@@ -157,8 +244,9 @@ def hero(panic, head, desc, price, chg, bad, session, drivers=None, title="", et
 <div class="head">{esc(head)}</div>
 <div class="desc">{esc(desc)}</div>{drv}
 <div class="hr"></div>
-<div class="pair">
+<div class="pair three">
 <div class="mini"><div class="k">{esc(etf)}</div><div class="v">{ptxt}</div><div class="s" style="color:{pcol}">{pc or '–'}{fl}</div></div>
+<div class="mini"><div class="k">기관 매도 지수</div><div class="v" style="color:{inst_level(inst)[1]}">{'–' if inst is None else f'{inst:.0f}'}</div><div class="s" style="color:{inst_level(inst)[1]}">{esc(inst_level(inst)[0])}</div></div>
 <div class="mini"><div class="k">악재 뉴스 지수</div><div class="v" style="color:{bcolor}">{bval}</div><div class="s" style="color:{bcolor}">{esc(bname)}</div></div>
 </div>""")
 
@@ -238,7 +326,8 @@ def tiles(results) -> str:
         out.append(f"""<a class="tile" href="?g={r.key}" target="_self" style="background:{bg}">
 <div class="n">{esc(r.name)}<span class="l" style="color:{color}">{esc(name)}</span></div>
 <div class="s" style="color:{color}">{val}</div>
-<div class="c" style="color:{cc}">{esc(r.etf)} {ct}</div></a>""")
+<div class="c" style="color:{cc}">{esc(r.etf)} {ct}</div>
+<div class="q">기관 매도 <b style="color:{inst_level(r.inst)[1]}">{'–' if r.inst is None else f'{r.inst:.0f}'}</b></div></a>""")
     return flat('<div class="tiles">' + "".join(out) + "</div>")
 
 
@@ -254,7 +343,7 @@ def index_rows(results) -> str:
     return flat("".join(out))
 
 
-def market_hero(panic, title, detail, hot, session) -> str:
+def market_hero(panic, title, detail, hot, session, inst=None, inst_hot=None) -> str:
     name, color = level(panic)
     val = "–" if panic is None else f"{panic:.0f}"
     w = 0 if panic is None else max(3, panic)
@@ -271,7 +360,8 @@ def market_hero(panic, title, detail, hot, session) -> str:
 <div class="gticks"><span style="left:0">평온</span><span style="left:40%;transform:translateX(-50%)">경계 40</span>
 <span style="left:70%;transform:translateX(-50%)">투매 70</span></div>
 <div class="head">{esc(title)}</div><div class="desc">{esc(detail)}</div>
-{'<div class="label" style="margin-top:16px">공포가 가장 큰 섹터</div>' + hot_html if hot else ''}""")
+{'<div class="label" style="margin-top:16px">공포가 가장 큰 섹터</div>' + hot_html if hot else ''}
+{'' if inst is None else f'<div class="label" style="margin-top:12px">기관 매도 지수 (S&P500·나스닥) <b style="color:{inst_level(inst)[1]}">{inst:.0f}</b> · {esc(inst_level(inst)[0])}</div>'}""")
 
 
 def members(df, br: dict, name_fn) -> str:

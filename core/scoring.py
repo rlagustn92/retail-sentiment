@@ -111,3 +111,55 @@ def interpret(panic: float | None, bad_news: float | None, price_chg: float | No
     if down:
         return ("평온한 조정", "가격은 빠지지만 공포는 크지 않아요.")
     return ("평온", "개인 투매 신호가 없어요.")
+
+
+def _side(ratio: float | None, sc: float | None) -> str | None:
+    """순매도 비율·백분위 점수 → 'sell' / 'buy' / 'flat'"""
+    if ratio is None:
+        return None
+    lo, hi = config.FLOW_SIDE_SCORE
+    if ratio > config.FLOW_SIDE_RATIO and (sc is None or sc >= hi):
+        return "sell"
+    if ratio < -config.FLOW_SIDE_RATIO and (sc is None or sc <= lo):
+        return "buy"
+    return "flat"
+
+
+FLOW_TEXT = {
+    ("sell", "buy"): ("기관이 던지고 개인이 받는 중",
+                      "대량 매도가 나오는데 개인은 사고 있어요. 개인 항복(투매)은 아직 안 나온 모습이라, 하락 초·중반에 자주 보이는 수급이에요."),
+    ("sell", "sell"): ("기관·개인 같이 던지는 중", "큰손과 개인이 함께 팔고 있어요. 본격 투매 구간의 수급이에요."),
+    ("sell", "flat"): ("기관 주도 매도",
+                       "큰손 매도가 이끌고 있고 개인은 아직 크게 움직이지 않았어요. 개인이 따라 던지기 시작하는지 지켜볼 구간이에요."),
+    ("buy", "sell"): ("개인이 던지고 기관이 받는 중",
+                      "개인 투매 물량을 큰손이 받아 가고 있어요. 하락 막바지(항복 구간)에 자주 보이는 수급이에요."),
+    ("buy", "buy"): ("기관·개인 같이 사는 중", "큰손과 개인 모두 매수 쪽이에요."),
+    ("buy", "flat"): ("기관 매수 우위", "큰손이 사는 쪽이고 개인은 뚜렷한 방향이 없어요."),
+    ("flat", "sell"): ("개인만 던지는 중", "큰손은 조용한데 개인 매도가 많아요. 개인 공포가 먼저 나온 모습이에요."),
+    ("flat", "buy"): ("개인만 사는 중", "큰손은 조용한데 개인이 사고 있어요."),
+    ("flat", "flat"): ("뚜렷한 쏠림 없음", "큰손도 개인도 한쪽으로 크게 쏠리지 않았어요."),
+}
+
+
+def flow_verdict(inst_ratio, inst_score, retail_ratios: list, retail_scores: list, inst_trend=None) -> tuple[str, str]:
+    """누가 던지고 누가 받는지 한 문장으로. 매수·매도 신호가 아니라 지금 수급 모습을 설명해요."""
+    inst = _side(inst_ratio, inst_score)
+    scores = list(retail_scores) + [None] * len(retail_ratios)
+    sides = {_side(r, scores[i]) for i, r in enumerate(retail_ratios)} - {None}
+    if sides in ({"sell"}, {"sell", "flat"}):
+        retail = "sell"
+    elif sides in ({"buy"}, {"buy", "flat"}):
+        retail = "buy"
+    else:
+        retail = "flat" if sides else None  # 레버리지와 본체가 엇갈리면 '쏠림 없음'으로
+    if inst is None and retail is None:
+        return "수급 데이터를 기다리는 중", "장이 열리고 15분 뒤부터 계산돼요."
+    title, desc = FLOW_TEXT[(inst or "flat", retail or "flat")]
+    if inst_trend:
+        five, sell_days, ndays = inst_trend
+        if ndays >= 3 and five is not None:
+            if five > config.FLOW_SIDE_RATIO and sell_days >= max(3, ndays - 1):
+                desc += f" 기관은 최근 {ndays}일 중 {sell_days}일 매도 우위로, 며칠째 물량을 내놓고 있어요."
+            elif five < -config.FLOW_SIDE_RATIO and ndays - sell_days >= max(3, ndays - 1):
+                desc += f" 기관은 최근 {ndays}일 중 {ndays - sell_days}일 매수 우위예요."
+    return title, desc

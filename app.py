@@ -19,7 +19,7 @@ import streamlit.components.v1 as components
 # 모듈 파일이 바뀌었거나 이 서버에서 처음 실행이면 의존 순서대로 다시 읽고 캐시를 비워요.
 _MODS = ["core.config", "core.scoring", "core.news", "core.retail_flow", "core.realtime", "core.store",
          "core.cboe", "core.stocktwits", "core.alpaca", "core.finra", "core.fred", "core.finnhub",
-         "core.metrics", "core.sources", "ui"]
+         "core.history", "core.metrics", "core.sources", "ui"]
 
 
 def _fresh_modules():
@@ -38,6 +38,7 @@ _fresh_modules()
 
 import ui  # noqa: E402  (위에서 새로 읽은 모듈을 가져와요)
 from core import config, sources
+from core import history
 from core import news as newsmod
 from core import retail_flow as rf
 from core.alpaca import Alpaca
@@ -48,7 +49,7 @@ from core.store import GitHubStore, LocalStore, NullStore
 KST = "Asia/Seoul"
 SHORT = {"retail": "개인 순매도", "volume": "거래량", "inverse": "인버스", "social": "Stocktwits",
          "putcall": "풋/콜", "vix": "VIX/VIX3M", "breadth": "종목 전반", "short": "장외 공매도",
-         "credit": "하이일드"}
+         "credit": "하이일드", "retail_etf": "본체 ETF 개인", "inst": "기관 대량 매도"}
 
 st.set_page_config(page_title="개인투심체크", page_icon="📉", layout="centered",
                    initial_sidebar_state="collapsed")
@@ -165,9 +166,10 @@ def safe(errors: dict, name: str, fn, *args, default=None):
         return default
 
 
-def retail_live(stored: pd.DataFrame, bars: pd.DataFrame, sym: str, now: datetime, errors: dict) -> pd.DataFrame:
-    """보고 있는 그룹만: 저장된 기록 이후 빠진 최근 구간(최대 2시간)을 직접 계산"""
-    b = bars[bars["sym"] == sym] if not bars.empty else bars
+def retail_live(stored: pd.DataFrame, bars: pd.DataFrame, sym: str, now: datetime, errors: dict,
+                ref: str | None = None) -> pd.DataFrame:
+    """보고 있는 그룹만: 저장된 기록 이후 빠진 최근 구간(최대 2시간)을 직접 계산. ref: 날짜 기준으로 쓸 15분봉 종목"""
+    b = bars[bars["sym"] == (ref or sym)] if not bars.empty else bars
     if b.empty:
         return stored
     last_day = pd.to_datetime(b["ts"], utc=True).dt.tz_convert(ET).dt.date.max()
@@ -176,6 +178,8 @@ def retail_live(stored: pd.DataFrame, bars: pd.DataFrame, sym: str, now: datetim
     end = min(Alpaca.sip_end(now), close_utc)
     start = open_utc
     mine = stored[stored["sym"] == sym] if not stored.empty and "sym" in stored else pd.DataFrame()
+    if not mine.empty and "inst_buy" in mine and sym in config.etf_symbols():
+        mine = mine[mine["inst_buy"].notna()]
     if not mine.empty:
         start = max(start, pd.to_datetime(mine["bucket"], utc=True).max().to_pydatetime()
                     + timedelta(minutes=config.BUCKET_MIN))
@@ -207,7 +211,10 @@ def live_market(group: str) -> MarketData:
     rt = sources.rt_from(snaps, dsip, diex, bars, now, is_open)
     retail = c_store("retail")
     if group != "all":
-        retail = retail_live(retail, bars, config.GROUPS[group]["flow"], now, err)
+        g = config.GROUPS[group]
+        retail = retail_live(retail, bars, g["flow"], now, err)
+        if g["etf"] != g["flow"]:
+            retail = retail_live(retail, bars, g["etf"], now, err, ref=g["flow"])
     vix = {**(safe(err, "VIX", c_vix_hist, default={}) or {}), **(safe(err, "VIX", c_vix_now, default={}) or {})}
     pc_df = c_store("putcall")
     pc_hist = pc_df.set_index("date")["equity_pc"].sort_index() if not pc_df.empty else None
@@ -274,6 +281,33 @@ def trend_chart(hist: pd.DataFrame, groups: list[str], panic, now, live: bool):
     return (area + line + rules + pt).properties(height=170, background="transparent").configure_view(strokeWidth=0)
 
 
+def flow_chart(flow: dict):
+    """대표 ETF 기관(대량 체결)과 개인의 1시간 순매수 흐름 (+면 매수 우위)"""
+    parts = []
+    for key, label in (("inst_today", f"기관 · {flow.get('etf', '')}"), ("retail_today", "개인")):
+        d = flow.get(key)
+        if d is None or d.empty or "roll" not in d:
+            continue
+        x = d.dropna(subset=["roll"])
+        parts.append(pd.DataFrame({"t": x["bucket"].dt.tz_convert(KST).dt.tz_localize(None),
+                                   "v": -x["roll"] * 100, "who": label}))
+    if not parts:
+        return None
+    df = pd.concat(parts, ignore_index=True)
+    if df["t"].nunique() < 2:
+        return None
+    who = list(dict.fromkeys(df["who"]))
+    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#8b95a1", opacity=0.5).encode(y="y:Q")
+    line = alt.Chart(df).mark_line(strokeWidth=3, interpolate="monotone", point=alt.OverlayMarkDef(size=28)).encode(
+        x=alt.X("t:T", title=None, axis=alt.Axis(format="%H:%M", **AXIS, tickCount=5)),
+        y=alt.Y("v:Q", title=None, axis=alt.Axis(**AXIS, format="+.0f", tickCount=4)),
+        color=alt.Color("who:N", scale=alt.Scale(domain=who, range=["#7c5cff", "#f5a524"][:len(who)]),
+                        legend=alt.Legend(orient="top", title=None, labelColor="#8b95a1", labelFontSize=12)),
+        tooltip=[alt.Tooltip("t:T", title="시각", format="%H:%M"), alt.Tooltip("who:N", title="누가"),
+                 alt.Tooltip("v:Q", title="1시간 순매수 %", format="+.1f")])
+    return (zero + line).properties(height=190, background="transparent").configure_view(strokeWidth=0)
+
+
 def retail_chart(rt: pd.DataFrame):
     if rt is None or rt.empty or "net" not in rt:
         return None
@@ -298,7 +332,11 @@ def page_all(m: MarketData, res: dict):
     spx = res["spx"]
     with st.container(key="card_hero"):
         st.markdown(ui.market_hero(sm["panic"], sm["title"], sm["detail"], sm["hot"],
-                                   spx.session_label or "장 대기"), unsafe_allow_html=True)
+                                   spx.session_label or "장 대기", sm["inst"], sm["inst_hot"]), unsafe_allow_html=True)
+    idx_flow = [res[k] for k in config.INDEX_KEYS if res[k].flow]
+    if idx_flow:
+        with st.container(key="card_flow"):
+            st.markdown(ui.flow_summary(idx_flow, sm["inst_hot"]), unsafe_allow_html=True)
     ch = trend_chart(m.score_hist, config.INDEX_KEYS, sm["panic"], m.now, m.market_open and not m.demo)
     if ch is not None:
         with st.container(key="card_trend"):
@@ -318,6 +356,12 @@ def page_all(m: MarketData, res: dict):
         with st.container(key="card_fear"):
             st.markdown(ui.indicator_rows(mk, "시장 전체 공포", "모든 지수에 공통으로 반영돼요"),
                         unsafe_allow_html=True)
+    vx = spx.indicators.get("vix")
+    hc = history.compare(m.vix_hist, m.vix3m_hist, (vx.extra or {}).get("vix") if vx else None,
+                         vx.value if vx else None)
+    if hc:
+        with st.container(key="card_history"):
+            st.markdown(ui.history_card(hc, history.summary(hc)), unsafe_allow_html=True)
 
 
 def page_group(m: MarketData, r):
@@ -327,16 +371,24 @@ def page_group(m: MarketData, r):
                      key=lambda i: -i.score)[:3]
         st.markdown(ui.hero(r.panic, r.headline, r.detail, r.price, r.chg, r.bad_news,
                             r.session_label or "장 대기", [(SHORT.get(i.key, i.title), i.display) for i in top],
-                            title=r.name, etf=r.etf, flow=g["flow"], flow_chg=r.flow_chg),
+                            title=r.name, etf=r.etf, flow=g["flow"], flow_chg=r.flow_chg, inst=r.inst),
                     unsafe_allow_html=True)
+    if r.flow:
+        with st.container(key="card_flow"):
+            st.markdown(ui.flow_card(r.flow, r.inst), unsafe_allow_html=True)
+            fc = flow_chart(r.flow)
+            if fc is not None:
+                st.altair_chart(fc, width="stretch")
     ch = trend_chart(m.score_hist, [r.key], r.panic, m.now, m.market_open and not m.demo)
     if ch is not None:
         with st.container(key="card_trend"):
             st.markdown(ui.section(f"{r.name} 투매 지수 흐름", "15분마다 기록 · 점선: 경계 40 · 투매 70"),
                         unsafe_allow_html=True)
             st.altair_chart(ch, width="stretch")
-    order = ["retail", "volume", "breadth", "inverse", "short", "social", "vix", "putcall", "credit"]
+    order = ["retail", "retail_etf", "volume", "breadth", "inverse", "short", "social", "vix", "putcall", "credit"]
     inds = [r.indicators[k] for k in order if k in r.indicators]
+    if r.inst_ind:
+        inds.insert(0, r.inst_ind)
     if r.news_ind:
         inds.append(r.news_ind)
     with st.container(key="card_inds"):

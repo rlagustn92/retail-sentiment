@@ -11,7 +11,7 @@ from . import config
 from . import news as newsmod
 from . import realtime
 from . import retail_flow as rf
-from .scoring import Indicator, caption_for, composite, fixed, interpret, percentile, score
+from .scoring import Indicator, caption_for, composite, fixed, flow_verdict, interpret, percentile, score
 
 ET = "America/New_York"
 
@@ -59,6 +59,9 @@ class Result:
     headlines: pd.DataFrame
     members: pd.DataFrame
     breadth: dict
+    inst: float | None = None              # 기관 매도 지수 (0~100, 투매 지수와 별개)
+    inst_ind: Indicator | None = None
+    flow: dict = field(default_factory=dict)  # 누가 던지고 누가 받나 (표·판정)
 
 
 # ---------------------------------------------------------------- 시세 계열 (SIP 15분봉)
@@ -123,6 +126,48 @@ def retail_metrics(retail: pd.DataFrame, sym: str, today):
     hist = r[r["date"] < today].tail(config.BASELINE_DAYS * 26)["roll"].dropna().tolist()
     value = float(t["roll"].dropna().iloc[-1]) if t["roll"].notna().any() else None
     return value, hist, t
+
+
+def side_metrics(trades: pd.DataFrame, sym: str, today, who: str) -> dict | None:
+    """개인('retail') 또는 기관('inst') 순매도 비율 (+면 매도 우위).
+    value: 최근 1시간, hist: 과거 1시간 값들, day: 오늘 누적, five: 최근 5거래일 누적, sell_days: 5일 중 매도 우위 날 수"""
+    b_col, s_col = f"{who}_buy", f"{who}_sell"
+    if trades is None or trades.empty or today is None or "sym" not in trades or b_col not in trades:
+        return None
+    r = trades[trades["sym"] == sym].dropna(subset=[b_col, s_col]).copy()
+    if r.empty:
+        return None
+    r["bucket"] = pd.to_datetime(r["bucket"], utc=True)
+    r = r.sort_values("bucket").drop_duplicates("bucket", keep="last")
+    r["date"] = r["bucket"].dt.tz_convert(ET).dt.date
+    parts = []
+    for _, g in r.groupby("date"):
+        g = g.copy()
+        g["roll"] = rf.rolling_ratio(g, who=who)
+        parts.append(g)
+    r = pd.concat(parts)
+    t = r[r["date"] == today]
+    hist = r[r["date"] < today].tail(config.BASELINE_DAYS * 26)["roll"].dropna().tolist()
+    value = float(t["roll"].dropna().iloc[-1]) if t["roll"].notna().any() else None
+    daily = r[r["date"] <= today].groupby("date")[[b_col, s_col]].sum()
+    daily = daily[(daily[b_col] + daily[s_col]) > 0]
+    net = (daily[s_col] - daily[b_col]) / (daily[b_col] + daily[s_col])
+    last5 = daily.tail(5)
+    five = None
+    if len(last5) and (last5[b_col].sum() + last5[s_col].sum()) > 0:
+        five = float((last5[s_col].sum() - last5[b_col].sum()) / (last5[b_col].sum() + last5[s_col].sum()))
+    return {"sym": sym, "who": who, "value": value, "hist": hist,
+            "day": float(net[today]) if today in net.index else None, "five": five,
+            "sell_days": int((net.tail(5) > 0).sum()), "ndays": int(len(net.tail(5))), "today": t}
+
+
+def fmt_side(x) -> str:
+    """순매도 비율 → '매도 12%' / '매수 5%'"""
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return "–"
+    if abs(x) < 0.005:
+        return "균형"
+    return f"{'매도' if x > 0 else '매수'} {abs(x) * 100:.0f}%"
 
 
 # ---------------------------------------------------------------- FINRA · FRED (하루 1번 나오는 지표)
@@ -240,6 +285,35 @@ def build_group(m: MarketData, key: str, sb: pd.DataFrame | None = None) -> Resu
         "거래소 밖에서 1센트 미만 단위로 체결된 주문(개인 주문의 흔적)을 매수·매도로 나눠요. 평소보다 크게 +로 치우치면 개인 투매예요.",
         "15분 지연")
 
+    # 대표 ETF(SOXX 등)의 개인·기관 수급 — 레버리지(SOXL)만 보면 놓치는 큰손 움직임
+    etf = g["etf"]
+    sides = {}
+    for who, sym in (("inst", etf), ("retail", flow), ("retail_etf", etf)):
+        if who == "retail_etf" and etf == flow:
+            continue
+        sides[who] = side_metrics(m.retail, sym, today, "inst" if who == "inst" else "retail")
+    re_ = sides.get("retail_etf")
+    if re_ and re_["value"] is not None:
+        sc, mth = score(re_["value"], re_["hist"], "retail")
+        inds["retail_etf"] = Indicator(
+            "retail_etf", f"{etf} 개인 순매도", re_["value"], fmt_pct(re_["value"]), sc, mth, caption_for(sc, mth),
+            f"레버리지({flow})가 아니라 대표 ETF {etf}에서 개인으로 추정되는 체결 중 매도가 얼마나 더 많았는지예요 (최근 1시간).",
+            "레버리지로 저가매수하면서 본체 ETF는 파는 경우도 있어서 둘을 같이 봐요. +면 파는 쪽이에요.",
+            "15분 지연")
+    inst_ind, inst_score = None, None
+    ins = sides.get("inst")
+    if ins and ins["value"] is not None:
+        inst_score, mth = score(ins["value"], ins["hist"], "inst")
+        cap = caption_for(inst_score, mth)
+        if ins["ndays"] >= 3:
+            cap = f"5일 중 {ins['sell_days']}일 매도 우위 · " + (cap.split(" · ")[-1] if " · " in cap else cap)
+        inst_ind = Indicator(
+            "inst", f"{etf} 기관(대량 체결) 순매도", ins["value"], fmt_pct(ins["value"]), inst_score, mth, cap,
+            f"{etf}에서 한 건에 20만 달러 넘게 체결된 대량 거래(주로 기관·큰손)만 모아, 매도 쪽이 얼마나 많았는지예요 (최근 1시간).",
+            "직전 체결가보다 낮게 체결되면 매도, 높게 체결되면 매수로 봐요(틱 규칙). +로 크게 치우치면 큰손이 던지는 중이에요. "
+            "투매 지수에는 넣지 않고 '기관 매도 지수'로 따로 보여줘요.",
+            "15분 지연")
+
     fm = finra_metrics(m.finra, flow)
     if fm:
         fv, fh, fd = fm
@@ -340,6 +414,22 @@ def build_group(m: MarketData, key: str, sb: pd.DataFrame | None = None) -> Resu
     panic = composite(inds)
     chg = etf_rt.get("chg")
     title, detail = interpret(panic, bad, chg)
+    flow_info = {}
+    rsides = [x for x in (sides.get("retail"), re_) if x and x["value"] is not None]
+    if (ins and ins["value"] is not None) or rsides:
+        r_sc = [inds[k].score for k in ("retail", "retail_etf") if k in inds]
+        v_title, v_desc = flow_verdict(
+            ins["value"] if ins else None, inst_score, [x["value"] for x in rsides], r_sc,
+            (ins["five"], ins["sell_days"], ins["ndays"]) if ins else None)
+        rows = []
+        for label, x in ((f"기관 · {etf} 대량 체결", ins), (f"개인 · {flow}", sides.get("retail")),
+                         (f"개인 · {etf}", re_)):
+            if x:
+                rows.append({"label": label, "who": "inst" if x is ins else "retail",
+                             "now": x["value"], "day": x["day"], "five": x["five"]})
+        flow_info = {"title": v_title, "desc": v_desc, "rows": rows, "etf": etf, "flow": flow,
+                     "inst_today": ins["today"] if ins else pd.DataFrame(),
+                     "retail_today": re_["today"] if re_ else (sides["retail"]["today"] if sides.get("retail") else pd.DataFrame())}
     label = ""
     day = etf_rt.get("day") or today
     if day is not None:
@@ -349,7 +439,8 @@ def build_group(m: MarketData, key: str, sb: pd.DataFrame | None = None) -> Resu
         mem = mem.sort_values("chg", na_position="last")
     heads = gnews.head(6) if gnews is not None and not gnews.empty else pd.DataFrame()
     return Result(key, g["name"], panic, bad, title, detail, g["etf"], etf_rt.get("price"), chg,
-                  flow_rt.get("chg"), label, inds, news_ind, rtoday, heads, mem, br)
+                  flow_rt.get("chg"), label, inds, news_ind, rtoday, heads, mem, br,
+                  inst=inst_score, inst_ind=inst_ind, flow=flow_info)
 
 
 def build_all(m: MarketData) -> dict[str, Result]:
@@ -365,4 +456,7 @@ def market_summary(res: dict[str, Result]) -> dict:
     chg = res["spx"].chg if "spx" in res else None
     title, detail = interpret(panic, bad, chg)
     hot = sorted([res[k] for k in config.SECTOR_KEYS if res[k].panic is not None], key=lambda r: -r.panic)
-    return {"panic": panic, "bad": bad, "title": title, "detail": detail, "hot": hot[:3]}
+    insts = [res[k].inst for k in config.INDEX_KEYS if res[k].inst is not None]
+    inst_hot = sorted([res[k] for k in config.SECTOR_KEYS if res[k].inst is not None], key=lambda r: -r.inst)
+    return {"panic": panic, "bad": bad, "title": title, "detail": detail, "hot": hot[:3],
+            "inst": float(np.mean(insts)) if insts else None, "inst_hot": inst_hot[:3]}
