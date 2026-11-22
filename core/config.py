@@ -116,7 +116,13 @@ WEIGHTS = {
     "inverse": 10,  # 인버스 갈아타기
     "vix": 10,      # VIX/VIX3M (지수 그룹만)
     "putcall": 5,   # 주식 풋/콜 (지수 그룹만)
+    "short": 5,     # FINRA 장외 공매도 비율 (전일, 낮을수록 개인 매도)
+    "credit": 5,    # 하이일드 채권 스프레드 (FRED, 지수 그룹만)
 }
+
+# FRED에서 받는 시리즈: 하이일드 채권 스프레드 (ICE BofA US High Yield OAS, %p)
+FRED_SERIES = {"credit": "BAMLH0A0HYM2"}
+FINRA_LOOKBACK = 70     # FINRA 장외 공매도: 최근 몇 거래일을 채워 둘지
 
 # 기준치(과거 기록)가 부족할 때 쓰는 고정 눈금: (0점 값, 100점 값)
 FALLBACK_SCALE = {
@@ -130,6 +136,7 @@ FALLBACK_SCALE = {
     "breadth": (0.0, 0.5),
     "news_count": (1.0, 3.0),
     "news_neg": (0.15, 0.5),
+    "credit": (3.0, 6.0),
 }
 
 # 종목 전반 투매: 이 정도 빠지면서 거래량이 이만큼 터진 종목 비율

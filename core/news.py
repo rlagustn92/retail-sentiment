@@ -1,4 +1,4 @@
-"""뉴스 수치화 (알파카 + 벤징가 뉴스).
+"""뉴스 수치화 (알파카·벤징가 뉴스 + Finnhub 보충).
 
 - 뉴스 강도: 최근 1시간 반도체 뉴스 건수 ÷ 평소 같은 시간대 평균
 - 뉴스 톤: 헤드라인마다 -1(악재) ~ +1(호재), 단어 사전 방식
@@ -62,7 +62,7 @@ def to_frame(items: list[dict]) -> pd.DataFrame:
     if not items:
         return pd.DataFrame(columns=COLS)
     df = pd.DataFrame([{
-        "id": it.get("id"),
+        "id": str(it.get("id")),  # 알파카(숫자)·Finnhub(fh-…) id가 섞여도 비교되게 문자열로
         "ts": pd.to_datetime(it.get("created_at"), utc=True),
         "headline": it.get("headline", ""),
         "source": it.get("source", ""),
@@ -80,7 +80,12 @@ def merge(*frames: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=COLS)
     df = pd.concat(fs, ignore_index=True)
     df["ts"] = pd.to_datetime(df["ts"], utc=True)
-    return df.drop_duplicates("id").sort_values("ts", ascending=False).reset_index(drop=True)
+    df["id"] = df["id"].astype(str)
+    df = df.drop_duplicates("id").sort_values("ts")
+    # 같은 기사가 알파카와 Finnhub에서 다 들어오면 먼저 나온 것 하나만 남겨요
+    norm = df["headline"].astype(str).str.lower().str.replace(r"[^a-z0-9]+", " ", regex=True).str.strip()
+    df = df[~(norm.duplicated() & (norm != ""))]
+    return df.sort_values("ts", ascending=False).reset_index(drop=True)
 
 
 def for_symbols(df: pd.DataFrame, syms: list[str]) -> pd.DataFrame:

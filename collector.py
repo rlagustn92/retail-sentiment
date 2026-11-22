@@ -4,7 +4,8 @@ python collector.py intraday           장중 15분마다: 개인 수급·Stockt
 python collector.py daily              장 마감 후: 남은 개인 수급 구간, 오늘 풋/콜 확정치, 오래된 기록 정리
 python collector.py backfill --days 10 처음 한 번: 과거 N거래일 개인 수급, 풋/콜, 뉴스 채우기
 
-환경변수: ALPACA_KEY, ALPACA_SECRET
+환경변수: ALPACA_KEY, ALPACA_SECRET (필수), FINNHUB_KEY (있으면 뉴스 보충), FRED_KEY (없어도 됨)
+FINRA 장외 공매도·FRED 하이일드 스프레드는 키 없이 받아요. 빠진 날짜는 다음 실행 때 자동으로 채워요.
 """
 from __future__ import annotations
 
@@ -15,14 +16,18 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
-from core import cboe, config, sources
+from core import cboe, config, finra, fred, sources
+from core import news as newsmod
 from core import retail_flow as rf
+from core.finnhub import Finnhub
+from core.finnhub import to_frame as finnhub_frame
 from core.alpaca import Alpaca
 from core.metrics import ET, MarketData, build_all
 from core.store import LocalStore
 
-KEEP_DAYS = {"retail": 100, "stocktwits": 60, "score": 45, "putcall": 400, "news": 4}
-DATE_COL = {"retail": "bucket", "stocktwits": "ts", "score": "ts", "putcall": "date", "news": "ts"}
+KEEP_DAYS = {"retail": 100, "stocktwits": 60, "score": 45, "putcall": 400, "news": 4, "finra": 400, "fred": 800}
+DATE_COL = {"retail": "bucket", "stocktwits": "ts", "score": "ts", "putcall": "date", "news": "ts",
+            "finra": "date", "fred": "date"}
 
 
 def log(*a):
@@ -73,6 +78,75 @@ def update_news(a: Alpaca, st: LocalStore, now: datetime):
     log(f"뉴스 {len(new)}건")
 
 
+def update_finnhub_news(st: LocalStore, now: datetime):
+    """Finnhub 종목 뉴스로 알파카 뉴스를 보충 (FINNHUB_KEY가 없으면 건너뜀)"""
+    key = os.environ.get("FINNHUB_KEY")
+    if not key:
+        log("Finnhub 키 없음 — 뉴스 보충 건너뜀")
+        return
+    old = st.read("news")
+    has_fh = not old.empty and old["id"].astype(str).str.startswith("fh-").any()
+    start = (now - timedelta(days=1 if has_fh else config.NEWS_BASELINE_DAYS)).date()
+    end = (now + timedelta(days=1)).date()
+    fh = Finnhub(key)
+    syms = sorted({s for g in config.GROUPS.values() for s in g["members"]})
+    parts, fails = [], 0
+    for sym in syms:
+        try:
+            parts.append(finnhub_frame(fh.company_news(sym, start, end), sym))
+        except Exception as e:
+            fails += 1
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            if code in (401, 403):
+                log("Finnhub 키가 맞지 않아요 — 중단", code)
+                return
+    new = newsmod.merge(*parts)
+    st.append("news", new)
+    log(f"Finnhub 뉴스 {len(new)}건 ({len(syms)}종목, 실패 {fails})")
+
+
+def update_finra(a: Alpaca, st: LocalStore, now: datetime):
+    """최근 FINRA_LOOKBACK 거래일 중 빠진 날의 장외 공매도 파일을 받아요 (처음엔 과거까지 자동으로 채움)"""
+    old = st.read("finra")
+    have = set(pd.to_datetime(old["date"], utc=True).dt.date) if not old.empty else set()
+    et_now = pd.Timestamp(now).tz_convert(ET)
+    want = []
+    for d in sessions(a, config.FINRA_LOOKBACK)[-config.FINRA_LOOKBACK:]:
+        day = pd.Timestamp(d["date"]).date()
+        if day > et_now.date() or (day == et_now.date() and et_now.hour < 18):
+            continue  # FINRA는 미국 동부 오후 6시 전에 그날 파일을 올려요
+        if day not in have:
+            want.append(day)
+    parts = []
+    for day in want:
+        try:
+            df = finra.daily(day, config.bar_symbols())
+        except Exception as e:
+            log("FINRA 실패", day, e)
+            continue
+        if df is not None and len(df):
+            parts.append(df)
+    if parts:
+        st.append("finra", pd.concat(parts, ignore_index=True))
+    log(f"FINRA 장외 공매도 {len(parts)}일 추가 (빠진 날 {len(want)}일)")
+
+
+def update_fred(st: LocalStore, now: datetime):
+    key = os.environ.get("FRED_KEY") or None
+    for sid in config.FRED_SERIES.values():
+        df = fred.series(sid, (now - timedelta(days=400)).date(), key)
+        st.append("fred", df)
+        log(f"FRED {sid} {len(df)}개, 최근 {df['date'].max().date() if len(df) else '-'}")
+
+
+def attempt(name: str, fn, *args):
+    """한 가지가 실패해도 나머지 수집은 계속"""
+    try:
+        fn(*args)
+    except Exception as e:
+        log(f"{name} 실패", e)
+
+
 def trim(st: LocalStore):
     now = pd.Timestamp.now(tz="UTC")
     for name, col in DATE_COL.items():
@@ -105,7 +179,8 @@ def record_scores(a: Alpaca, st: LocalStore, now: datetime, st_now: dict):
                    vix_now=vix.get("vix_now"), vix3m_now=vix.get("vix3m_now"),
                    putcall_hist=pc.set_index("date")["equity_pc"].sort_index() if not pc.empty else None,
                    putcall_now=safe("putcall", cboe.equity_putcall_intraday), st_now=st_now,
-                   st_hist=st.read("stocktwits"), news=st.read("news"))
+                   st_hist=st.read("stocktwits"), news=newsmod.merge(st.read("news")),
+                   finra=st.read("finra"), fred=st.read("fred"))
     res = build_all(m)
     rows = pd.DataFrame([{"ts": pd.Timestamp(now), "group": k, "panic": r.panic, "bad_news": r.bad_news,
                           "chg": r.chg} for k, r in res.items()])
@@ -140,10 +215,10 @@ def main():
                 st.append("stocktwits", pd.DataFrame([dict(st_now[sym], ts=pd.Timestamp(now), sym=sym)]))
             except Exception as e:
                 log("Stocktwits 실패", sym, e)
-        try:
-            update_news(a, st, now)
-        except Exception as e:
-            log("뉴스 실패", e)
+        attempt("뉴스", update_news, a, st, now)
+        attempt("Finnhub 뉴스", update_finnhub_news, st, now)
+        attempt("FINRA", update_finra, a, st, now)
+        attempt("FRED", update_fred, st, now)
         record_scores(a, st, now, st_now)
 
     elif args.mode == "daily":
@@ -153,6 +228,8 @@ def main():
         pc = sources.putcall_backfill([pd.Timestamp(day["date"]).date()])
         st.append("putcall", pc)
         log(f"풋/콜 {pc.to_dict('records')}")
+        attempt("FINRA", update_finra, a, st, now)
+        attempt("FRED", update_fred, st, now)
         trim(st)
 
     else:  # backfill
@@ -164,10 +241,10 @@ def main():
         pc = sources.putcall_backfill([pd.Timestamp(d["date"]).date() for d in done[-60:]])
         st.append("putcall", pc)
         log(f"풋/콜 {len(pc)}일")
-        try:
-            update_news(a, st, now)
-        except Exception as e:
-            log("뉴스 실패", e)
+        attempt("뉴스", update_news, a, st, now)
+        attempt("Finnhub 뉴스", update_finnhub_news, st, now)
+        attempt("FINRA", update_finra, a, st, now)
+        attempt("FRED", update_fred, st, now)
         trim(st)
 
 

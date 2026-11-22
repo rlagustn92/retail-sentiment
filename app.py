@@ -24,7 +24,8 @@ from core.store import GitHubStore, LocalStore, NullStore
 
 KST = "Asia/Seoul"
 SHORT = {"retail": "개인 순매도", "volume": "거래량", "inverse": "인버스", "social": "Stocktwits",
-         "putcall": "풋/콜", "vix": "VIX/VIX3M", "breadth": "종목 전반"}
+         "putcall": "풋/콜", "vix": "VIX/VIX3M", "breadth": "종목 전반", "short": "장외 공매도",
+         "credit": "하이일드"}
 
 st.set_page_config(page_title="개인투심체크", page_icon="📉", layout="centered",
                    initial_sidebar_state="collapsed")
@@ -207,7 +208,8 @@ def live_market(group: str) -> MarketData:
                       vix_hist=vix.get("vix_hist"), vix3m_hist=vix.get("vix3m_hist"),
                       vix_now=vix.get("vix_now"), vix3m_now=vix.get("vix3m_now"),
                       putcall_hist=pc_hist, putcall_now=pc_now, putcall_intraday=pc_now is not None,
-                      st_now=st_now, st_hist=st_hist, news=news, score_hist=c_store("score"), errors=err)
+                      st_now=st_now, st_hist=st_hist, news=news, score_hist=c_store("score"),
+                      finra=c_store("finra"), fred=c_store("fred"), errors=err)
 
 
 # ------------------------------------------------------------------ 차트
@@ -288,7 +290,7 @@ def page_all(m: MarketData, res: dict):
     with st.container(key="card_index"):
         st.markdown(ui.section("지수") + ui.index_rows([res[k] for k in config.INDEX_KEYS]),
                     unsafe_allow_html=True)
-    mk = [spx.indicators[k] for k in ("vix", "putcall") if k in spx.indicators]
+    mk = [spx.indicators[k] for k in ("vix", "putcall", "credit") if k in spx.indicators]
     if mk:
         with st.container(key="card_fear"):
             st.markdown(ui.indicator_rows(mk, "시장 전체 공포", "모든 지수에 공통으로 반영돼요"),
@@ -310,7 +312,7 @@ def page_group(m: MarketData, r):
             st.markdown(ui.section(f"{r.name} 투매 지수 흐름", "15분마다 기록 · 점선: 경계 40 · 투매 70"),
                         unsafe_allow_html=True)
             st.altair_chart(ch, width="stretch")
-    order = ["retail", "volume", "breadth", "inverse", "social", "vix", "putcall"]
+    order = ["retail", "volume", "breadth", "inverse", "short", "social", "vix", "putcall", "credit"]
     inds = [r.indicators[k] for k in order if k in r.indicators]
     if r.news_ind:
         inds.append(r.news_ind)

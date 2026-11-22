@@ -14,15 +14,17 @@ FILES = {
     "stocktwits": "stocktwits.csv",  # ts, sym, msgs_per_hour, bull, bear, bear_ratio
     "score": "score.csv",            # ts, group, panic, bad_news, chg
     "news": "news.csv",              # id, ts, headline, source, url, symbols, tone
+    "finra": "finra_short.csv",      # date, sym, short, total, ratio (FINRA 장외 공매도)
+    "fred": "fred.csv",              # date, series, value
 }
 KEYS = {"retail": ["bucket", "sym"], "putcall": ["date"], "stocktwits": ["ts", "sym"],
-        "score": ["ts", "group"], "news": ["id"]}
+        "score": ["ts", "group"], "news": ["id"], "finra": ["date", "sym"], "fred": ["date", "series"]}
 DATE_COLS = {"retail": ["bucket"], "stocktwits": ["ts"], "score": ["ts"], "putcall": ["date"],
-             "news": ["ts"]}
+             "news": ["ts"], "finra": ["date"], "fred": ["date"]}
 
 
 def _parse(name: str, text: str) -> pd.DataFrame:
-    df = pd.read_csv(io.StringIO(text))
+    df = pd.read_csv(io.StringIO(text), dtype={"id": str} if name == "news" else None)
     for c in DATE_COLS.get(name, []):
         if c in df:
             df[c] = pd.to_datetime(df[c], utc=True)

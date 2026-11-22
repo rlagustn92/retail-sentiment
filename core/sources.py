@@ -144,7 +144,8 @@ def demo_market(seed: int = 7) -> MarketData:
     vdates = pd.bdate_range(end=et_today, periods=260)
     vix = pd.Series(16 + rng.normal(0, 1.5, len(vdates)).cumsum() * 0.2, index=vdates).clip(11, 40)
     vix3m = vix * 1.1 + rng.normal(0, 1.1, len(vdates))
-    pc = pd.Series(0.64 + rng.normal(0, 0.12, 60), index=pd.bdate_range(end=et_today, periods=60))
+    pc_days = pd.bdate_range(end=et_today, periods=60)  # pandas 3은 주말에 하루 적게 돌려줄 때가 있어 길이를 맞춤
+    pc = pd.Series(0.64 + rng.normal(0, 0.12, len(pc_days)), index=pc_days)
     st_rows = []
     for sym in config.social_symbols():
         for t in pd.date_range(end=now, periods=300, freq="15min"):

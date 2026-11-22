@@ -34,6 +34,8 @@ class MarketData:
     st_hist: pd.DataFrame = field(default_factory=pd.DataFrame)
     news: pd.DataFrame = field(default_factory=pd.DataFrame)
     score_hist: pd.DataFrame = field(default_factory=pd.DataFrame)
+    finra: pd.DataFrame = field(default_factory=pd.DataFrame)    # date, sym, short, total, ratio
+    fred: pd.DataFrame = field(default_factory=pd.DataFrame)     # date, series, value
     errors: dict = field(default_factory=dict)
     demo: bool = False
 
@@ -123,6 +125,44 @@ def retail_metrics(retail: pd.DataFrame, sym: str, today):
     return value, hist, t
 
 
+# ---------------------------------------------------------------- FINRA · FRED (하루 1번 나오는 지표)
+def finra_metrics(df: pd.DataFrame, sym: str):
+    """(최근 장외 공매도 비율, 그 전 기록들, 기준 날짜)"""
+    if df is None or df.empty or "sym" not in df:
+        return None
+    r = df[df["sym"] == sym].copy()
+    if r.empty:
+        return None
+    r["date"] = pd.to_datetime(r["date"], utc=True)
+    r = r.sort_values("date").drop_duplicates("date", keep="last")
+    hist = r["ratio"].iloc[:-1].tail(config.BASELINE_DAYS).astype(float).tolist()
+    return float(r["ratio"].iloc[-1]), hist, r["date"].iloc[-1]
+
+
+def low_caption(s: float | None) -> str:
+    """값이 '낮을수록' 공포인 지표용 한 줄 요약"""
+    if s is None:
+        return "기준치 쌓는 중"
+    if s >= 70:
+        return f"평소보다 낮아요 · 하위 {max(1, round(100 - s))}%"
+    if s >= 40:
+        return f"조금 낮은 편이에요 · 하위 {max(1, round(100 - s))}%"
+    if s < 20:
+        return "평소보다 높아요 · 개인 매수 쪽이에요"
+    return "평소 수준이에요"
+
+
+def fred_series(df: pd.DataFrame, series_id: str) -> pd.Series | None:
+    if df is None or df.empty or "series" not in df:
+        return None
+    r = df[df["series"] == series_id].copy()
+    if r.empty:
+        return None
+    r["date"] = pd.to_datetime(r["date"], utc=True)
+    r = r.sort_values("date").drop_duplicates("date", keep="last")
+    return r.set_index("date")["value"].astype(float).dropna()
+
+
 # ---------------------------------------------------------------- 뉴스
 def news_metrics(df: pd.DataFrame, now: datetime):
     if df is None or df.empty:
@@ -200,6 +240,20 @@ def build_group(m: MarketData, key: str, sb: pd.DataFrame | None = None) -> Resu
         "거래소 밖에서 1센트 미만 단위로 체결된 주문(개인 주문의 흔적)을 매수·매도로 나눠요. 평소보다 크게 +로 치우치면 개인 투매예요.",
         "15분 지연")
 
+    fm = finra_metrics(m.finra, flow)
+    if fm:
+        fv, fh, fd = fm
+        sc = percentile(fv, fh, higher_is_panic=False)
+        cap = low_caption(sc)
+        if fh:
+            cap = f"평소 {np.mean(fh) * 100:.0f}% · " + cap
+        inds["short"] = Indicator(
+            "short", f"{flow} 장외 공매도 비율", fv, f"{fv * 100:.0f}%", sc, "백분위" if sc is not None else "", cap,
+            f"거래소 밖(장외)에서 체결된 {flow} 거래 중 공매도로 신고된 비율이에요. FINRA가 장 마감 뒤 하루 한 번 공개해요.",
+            "개인이 사면 증권사가 공매도로 물량을 대주는 경우가 많아서, 이 비율은 개인이 살수록 오르고 팔수록 내려가요. "
+            "평소보다 낮을수록 개인 매도가 많았다는 뜻이라 점수가 높아요.",
+            f"{fd.month}월 {fd.day}일 기준 · 하루 1번")
+
     # 구성 종목 전반
     br = realtime.breadth(m.rt, g["members"])
     if br.get("n"):
@@ -232,6 +286,19 @@ def build_group(m: MarketData, key: str, sb: pd.DataFrame | None = None) -> Resu
                 "미국 주식 옵션에서 하락 베팅(풋) 거래량 ÷ 상승 베팅(콜) 거래량이에요.",
                 "평소 0.6 안팎이에요. 0.9~1을 넘으면 하락 대비 수요가 몰린 공포 구간이에요.",
                 "30분 단위" if m.putcall_intraday else "전일 확정치")
+        cr = fred_series(m.fred, config.FRED_SERIES["credit"])
+        if cr is not None and len(cr):
+            cv = float(cr.iloc[-1])
+            sc, mth = score(cv, cr.iloc[:-1].tail(252).tolist(), "credit")
+            cap = caption_for(sc, mth)
+            if len(cr) > 5:
+                cap = f"1주 {cv - float(cr.iloc[-6]):+.2f}%p · " + cap
+            cd = cr.index[-1]
+            inds["credit"] = Indicator(
+                "credit", "하이일드 채권 스프레드", cv, f"{cv:.2f}%p", sc, mth, cap,
+                "신용등급이 낮은 회사채 금리가 국채보다 얼마나 높은지예요 (ICE BofA, FRED).",
+                "돈이 위험을 피할수록 벌어져요. 최근 1년 중 높은 쪽이면 주식만이 아니라 시장 전체가 겁먹은 상태예요.",
+                f"{cd.month}월 {cd.day}일 기준 · 하루 늦게 나와요")
 
     soc = g.get("social")
     if soc and m.st_now.get(soc):

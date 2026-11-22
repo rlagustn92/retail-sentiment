@@ -53,6 +53,8 @@ jobs:
         env:
           ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
           ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
+          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}   # 없으면 뉴스 보충만 건너뜀
+          FRED_KEY: ${{ secrets.FRED_KEY }}         # 없어도 됨 (키 없이 받는 주소로 대체)
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             MODE="${{ github.event.inputs.mode }}"

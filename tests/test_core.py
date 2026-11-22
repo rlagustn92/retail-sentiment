@@ -96,3 +96,71 @@ def test_compute_buckets():
     assert df["retail_buy"].sum() == 30 and df["retail_sell"].sum() == 90
     roll = rf.rolling_ratio(df)
     assert abs(roll.iloc[-1] - 0.5) < 1e-9
+
+
+# ---------------------------------------------------------------- FINRA · FRED · Finnhub
+from core import finnhub, finra, fred
+from core.metrics import MarketData, build_group
+from core.store import LocalStore
+
+
+def test_finra_parse():
+    text = ("Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market\n"
+            "20261120|SOXL|127.5|20|200|B,Q,N\n"
+            "20261120|AAPL|10|0|40|B,Q,N\n"
+            "20261120|TQQQ|0|0|0|B,Q,N\n"
+            "12414\n")
+    df = finra.parse(text, ["SOXL", "TQQQ"])
+    assert list(df["sym"]) == ["SOXL"]                      # 거래량 0인 종목·마지막 줄(건수)은 제외
+    assert abs(df["ratio"].iloc[0] - 127.5 / 200) < 1e-9
+    assert df["date"].iloc[0] == pd.Timestamp("2026-11-20", tz="UTC")
+
+
+def test_fred_parse_csv():
+    df = fred.parse_csv("BAMLH0A0HYM2", "observation_date,BAMLH0A0HYM2\n2026-11-02,3.43\n2026-11-03,\n")
+    assert len(df) == 1 and df["value"].iloc[0] == 3.43 and df["series"].iloc[0] == "BAMLH0A0HYM2"
+
+
+def test_finnhub_frame_and_merge_dedup():
+    items = [{"id": 1, "datetime": 1795000000, "headline": "Nvidia shares tumble on export curbs",
+              "source": "Yahoo", "url": "u", "related": "NVDA"},
+             {"id": 2, "datetime": 1795000100, "headline": "", "related": "NVDA"}]     # 제목 없음 → 제외
+    fh = finnhub.to_frame(items, "AMD")
+    assert list(fh["id"]) == ["fh-1"] and fh["symbols"].iloc[0] == ",NVDA,AMD,"
+    alp = news.to_frame([{"id": 1, "created_at": "2026-11-18T09:00:00Z", "symbols": ["NVDA"],
+                          "headline": "NVIDIA shares tumble on export curbs!"}])     # 같은 기사, 먼저 나옴
+    merged = news.merge(fh, alp)
+    assert len(merged) == 1 and merged["id"].iloc[0] == "1"          # id가 같아도(1 vs fh-1) 안 섞이고, 제목으로 중복 제거
+
+
+def test_news_ids_survive_csv(tmp_path):
+    st = LocalStore(tmp_path)
+    st.append("news", news.to_frame([{"id": 5, "created_at": "2026-11-18T09:00:00Z", "headline": "a", "symbols": []}]))
+    st.append("news", finnhub.to_frame([{"id": 5, "datetime": 1795000000, "headline": "b"}], "AMD"))
+    st.append("news", news.to_frame([{"id": 5, "created_at": "2026-11-18T09:00:00Z", "headline": "a", "symbols": []}]))
+    assert sorted(st.read("news")["id"]) == ["5", "fh-5"]              # 다시 읽어도 같은 기사는 하나
+
+
+def _finra_hist(sym: str, last: float) -> pd.DataFrame:
+    days = pd.bdate_range(end="2026-11-20", periods=61, tz="UTC")
+    ratios = [0.60 + 0.01 * ((i * 7) % 5) for i in range(60)] + [last]
+    return pd.DataFrame({"date": days, "sym": sym, "short": ratios, "total": 1.0, "ratio": ratios})
+
+
+def test_short_indicator_direction():
+    now = datetime(2026, 11, 23, 15, tzinfo=timezone.utc)
+    low = build_group(MarketData(now=now, finra=_finra_hist("SOXL", 0.40)), "semi").indicators["short"]
+    high = build_group(MarketData(now=now, finra=_finra_hist("SOXL", 0.80)), "semi").indicators["short"]
+    assert low.score > 90 and high.score < 10                       # 공매도 비율이 낮을수록(개인 매도) 공포
+    assert "11월 20일" in low.delay and low.display == "40%"
+
+
+def test_credit_indicator_only_for_index_groups():
+    now = datetime(2026, 11, 23, 15, tzinfo=timezone.utc)
+    days = pd.bdate_range(end="2026-11-20", periods=260, tz="UTC")
+    vals = [3.0 + 0.002 * i for i in range(259)] + [5.0]
+    fr = pd.DataFrame({"date": days, "series": config.FRED_SERIES["credit"], "value": vals})
+    m = MarketData(now=now, fred=fr)
+    spx = build_group(m, "spx").indicators["credit"]
+    assert spx.score > 95 and spx.display == "5.00%p"
+    assert "credit" not in build_group(m, "semi").indicators

@@ -19,7 +19,7 @@
 
 - 화면: Streamlit Cloud (무료)
 - 기록 수집: GitHub Actions (무료, 장중 15분마다)
-- 데이터: 알파카 무료 키, CBOE, Stocktwits (모두 무료)
+- 데이터: 알파카 무료 키, CBOE, Stocktwits, FINRA 장외 공매도, FRED, Finnhub 뉴스 (모두 무료)
 
 키 없이 실행하면 데모 데이터로 화면이 떠요.
 
@@ -31,12 +31,13 @@
 |---|---|
 | 앱 주소 | https://tusimcheck.streamlit.app |
 | 코드 | https://github.com/rlagustn92/retail-sentiment (공개, `main` 브랜치) |
-| 수집 기록 | 같은 저장소의 `data` 브랜치 (CSV: retail_flow, putcall, stocktwits, score, news) |
+| 수집 기록 | 같은 저장소의 `data` 브랜치 (CSV: retail_flow, putcall, stocktwits, score, news, finra_short, fred) |
 | 수집기 | Actions → **collect** (평일 한국시간 밤 10시~아침 6시 15분마다, 아침 6시 40분 마감 정리) |
 | 화면 설정 | share.streamlit.io → tusimcheck → Settings (Python 3.12, Secrets) |
 
 **키·토큰이 들어 있는 곳** (값은 어디에도 적지 않아요)
-- GitHub 저장소 Secrets: `ALPACA_KEY`, `ALPACA_SECRET` (모의계좌 키, 수집기용)
+- GitHub 저장소 Secrets: `ALPACA_KEY`, `ALPACA_SECRET` (모의계좌 키, 수집기용), `FINNHUB_KEY` (뉴스 보충, 없으면 건너뜀)
+  - Finnhub 키는 저장소 폴더의 **`키등록.cmd`를 더블클릭**해서 붙여넣으면 돼요. FRED·FINRA는 키가 필요 없어요.
 - Streamlit Secrets: `ALPACA_KEY`, `ALPACA_SECRET`, `GH_REPO`, `GH_TOKEN`, `DATA_BRANCH`
   - `GH_TOKEN`은 공개 저장소 읽기 전용 토큰이에요. 공개 저장소라도 GitHub 요청 한도 때문에 넣어 둬요. 만료되면 새로 만들어 Streamlit Secrets 값만 바꾸면 돼요.
 
@@ -84,13 +85,15 @@ git fetch origin data          # 수집 기록 받기 (git show origin/data:scor
 | 인버스 갈아타기 | 인버스 거래대금 ÷ 레버리지 거래대금 (인버스 있는 그룹만) | 15분 | 10 |
 | VIX/VIX3M | 1을 넘으면 단기 패닉 (지수 그룹만) | 15분 | 10 |
 | 풋/콜 비율 | 미국 주식 옵션의 하락 베팅 ÷ 상승 베팅 (지수 그룹만) | 30분 | 5 |
-| 악재 뉴스 | 최근 1시간 그룹 종목 뉴스 건수와 악재 비율 (투매 점수와 별도) | 실시간 | – |
+| 장외 공매도 비율 | FINRA가 공개하는 장외 체결 중 공매도 비율. 개인이 사면 증권사가 공매도로 대주기 때문에 **평소보다 낮을수록 개인 매도** | 하루 1번 (전일) | 5 |
+| 하이일드 스프레드 | 신용 낮은 회사채 금리 − 국채 금리 (FRED). 벌어질수록 시장 전체 공포 (지수 그룹만) | 하루 늦게 | 5 |
+| 악재 뉴스 | 최근 1시간 그룹 종목 뉴스 건수와 악재 비율 (알파카 + Finnhub, 투매 점수와 별도) | 실시간 | – |
 
 해당 없는 지표는 빠지고, 남은 지표의 가중치로 100점 환산해요.
 
 **실시간 거래량 추정:** 알파카 무료 플랜은 전체 시장 데이터를 15분 늦게 주고, IEX 거래소 데이터만 실시간으로 줘요. IEX는 전체 거래량의 일부지만 종목별 비중이 꽤 일정해서, "오늘 IEX 거래량 ÷ (최근 20일 IEX 평균 × 이 시각까지 보통 쌓이는 비율)"로 계산하면 실제 상대 거래량과 거의 비슷하게 나와요. 개인 순매도는 거래소 밖 체결이라 IEX에 안 잡혀서 15분 지연 그대로예요.
 
-점수는 각 지표가 **최근 기록 중 어디쯤인지(백분위)**로 매겨요. 기록이 쌓이기 전(처음 며칠)에는 고정 기준으로 매기고, 화면에 "기준치 쌓는 중"이라고 표시돼요.
+점수는 각 지표가 **최근 기록 중 어디쯤인지(백분위)**로 매겨요. 2008년이나 닷컴 버블 같은 과거 사건이 아니라 **최근 약 3개월(60거래일)**이 기준이에요(VIX·하이일드 스프레드는 최근 1년, 뉴스는 최근 3일 같은 시간대). 기록이 쌓이기 전(처음 며칠)에는 고정 기준으로 매기고, 화면에 "기준치 쌓는 중"이라고 표시돼요.
 
 > 참고 지표예요. 매수·매도 신호가 아니에요.
 
@@ -171,6 +174,9 @@ core/
   retail_flow.py       개인 매수/매도 추정 (BJZZ)
   realtime.py          IEX 실시간 거래량 추정, 종목 전반 투매
   cboe.py              VIX, 풋/콜
+  finra.py             FINRA 장외 공매도 (키 없음)
+  fred.py              FRED 하이일드 스프레드 (키 없어도 됨)
+  finnhub.py           Finnhub 뉴스 보충 (수집기만)
   stocktwits.py        Stocktwits 심리
   news.py              뉴스 수치화
   scoring.py           점수·해석
@@ -179,4 +185,5 @@ core/
   store.py             기록 읽기/쓰기
 .github/workflows/collect.yml   수집 일정
 tests/                 테스트 (python -m pytest -q)
+키등록.cmd             Finnhub 키를 GitHub Secrets에 넣는 더블클릭 파일 (tools/set-keys.ps1)
 ```
