@@ -50,5 +50,5 @@ def series(series_id: str, start: date, key: str | None = None) -> pd.DataFrame:
                        "observation_start": start.isoformat()})
         obs = r.json().get("observations", [])
         return _frame(series_id, [o["date"] for o in obs], [o["value"] for o in obs])  # 빈 값은 "."
-    r = _get(CSV, {"id": series_id, "cosd": start.isoformat()}, headers=UA)
+    r = _get(CSV, {"id": series_id, "cosd": start.isoformat()}, headers=UA, tries=2)  # 키 없는 주소는 자주 막혀서 짧게
     return parse_csv(series_id, r.text)

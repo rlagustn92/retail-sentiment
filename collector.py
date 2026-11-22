@@ -93,7 +93,7 @@ def update_finnhub_news(st: LocalStore, now: datetime):
     old = st.read("news")
     has_fh = not old.empty and old["id"].astype(str).str.startswith("fh-").any()
     start = (now - timedelta(days=1 if has_fh else config.NEWS_BASELINE_DAYS)).date()
-    end = (now + timedelta(days=1)).date()
+    end = now.date()  # Finnhub는 미래 날짜(to)를 주면 400 Bad Request를 돌려줘요
     fh = Finnhub(key)
     syms = sorted({s for g in config.GROUPS.values() for s in g["members"]})
     parts, fails, first_err = [], 0, None
