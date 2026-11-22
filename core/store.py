@@ -58,20 +58,49 @@ class LocalStore:
 
 
 class GitHubStore:
-    """비공개 저장소면 token(읽기 전용 권한)이 필요합니다."""
+    """data 브랜치의 CSV를 읽어요. 토큰이 틀렸거나 저장소 이름이 이상해도 공개 저장소면 토큰 없이·raw 주소로 다시 시도해요.
+    마지막 실패 이유는 errors에 남겨 화면 아래에 보여줘요."""
 
     def __init__(self, repo: str, branch: str = "data", token: str | None = None):
-        self.repo, self.branch = repo, branch
-        self.h = {"Accept": "application/vnd.github.raw"}
-        if token:
-            self.h["Authorization"] = f"Bearer {token}"
+        self.repo = (repo or "").strip().removeprefix("https://github.com/").strip("/")
+        self.branch = branch or "data"
+        self.token = (token or "").strip() or None
+        self.errors: dict[str, str] = {}
+
+    def _try(self, url: str, params: dict | None, headers: dict) -> requests.Response | None:
+        try:
+            return requests.get(url, params=params, headers=headers, timeout=20)
+        except requests.RequestException:
+            return None
 
     def read(self, name: str) -> pd.DataFrame:
-        url = f"https://api.github.com/repos/{self.repo}/contents/{FILES[name]}"
-        r = requests.get(url, params={"ref": self.branch}, headers=self.h, timeout=20)
-        if r.status_code != 200:
-            return pd.DataFrame()
-        return _parse(name, r.text)
+        path = FILES[name]
+        api = f"https://api.github.com/repos/{self.repo}/contents/{path}"
+        raw = {"Accept": "application/vnd.github.raw"}
+        tries = []
+        if self.token:
+            tries.append(("토큰", api, {"ref": self.branch}, dict(raw, Authorization=f"Bearer {self.token}")))
+        tries.append(("토큰 없이", api, {"ref": self.branch}, raw))
+        tries.append(("raw", f"https://raw.githubusercontent.com/{self.repo}/{self.branch}/{path}", None, {}))
+        fails = []
+        for label, url, params, headers in tries:
+            r = self._try(url, params, headers)
+            if r is not None and r.status_code == 200 and r.text.strip():
+                if fails:
+                    self.errors[name] = " · ".join(fails)
+                else:
+                    self.errors.pop(name, None)
+                return _parse(name, r.text)
+            code = "연결 실패" if r is None else r.status_code
+            if code == 404 and label != "토큰":
+                if name == "retail":  # 수집기가 제일 먼저 만드는 파일인데 없으면 GH_REPO·DATA_BRANCH가 틀린 것
+                    self.errors[name] = f"404 — GH_REPO '{self.repo}' · DATA_BRANCH '{self.branch}' 확인"
+                else:
+                    self.errors.pop(name, None)  # 아직 안 만들어진 파일 (정상)
+                return pd.DataFrame()
+            fails.append(f"{label} {code}")
+        self.errors[name] = " · ".join(fails)
+        return pd.DataFrame()
 
 
 class NullStore:

@@ -441,8 +441,11 @@ if(a){a.scrollIntoView({inline:'center',block:'nearest'});}},300);</script>"""
              f"{config.REFRESH_SEC}초마다 자동으로 새로고침돼요."]
     if m.errors:
         notes.append("못 받은 데이터: " + ", ".join(sorted(set(m.errors.keys()))))
-        if any(("401" in v or "403" in v) for k, v in m.errors.items() if k in ("시세(15분봉)", "장 시간", "실시간 시세")):
-            notes.append("알파카 키가 맞는지 확인해 주세요 (모의계좌 키, Secrets 설정).")
+    se = dict(getattr(store(), "errors", {})) if not DEMO else {}
+    if se:
+        hint = " Streamlit Secrets의 GH_TOKEN을 새로 만들어 넣거나 지워도 돼요(공개 저장소라 없어도 읽혀요)." if any(
+            ("토큰 401" in v or "토큰 403" in v) for v in se.values()) else ""
+        notes.append("수집 기록 읽기: " + "; ".join(f"{k} {v}" for k, v in se.items()) + hint)
     st.markdown(ui.footer(notes), unsafe_allow_html=True)
 
 
