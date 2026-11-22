@@ -77,11 +77,12 @@ class GitHubStore:
         path = FILES[name]
         api = f"https://api.github.com/repos/{self.repo}/contents/{path}"
         raw = {"Accept": "application/vnd.github.raw"}
-        tries = []
+        rawurl = ("raw", f"https://raw.githubusercontent.com/{self.repo}/{self.branch}/{path}", None, {})
         if self.token:
-            tries.append(("토큰", api, {"ref": self.branch}, dict(raw, Authorization=f"Bearer {self.token}")))
-        tries.append(("토큰 없이", api, {"ref": self.branch}, raw))
-        tries.append(("raw", f"https://raw.githubusercontent.com/{self.repo}/{self.branch}/{path}", None, {}))
+            tries = [("토큰", api, {"ref": self.branch}, dict(raw, Authorization=f"Bearer {self.token}")), rawurl,
+                     ("토큰 없이", api, {"ref": self.branch}, raw)]
+        else:  # 공개 저장소: raw 주소는 시간당 요청 한도가 없어요 (최대 5분 늦을 수 있음)
+            tries = [rawurl, ("토큰 없이", api, {"ref": self.branch}, raw)]
         fails = []
         for label, url, params, headers in tries:
             r = self._try(url, params, headers)
@@ -92,7 +93,7 @@ class GitHubStore:
                     self.errors.pop(name, None)
                 return _parse(name, r.text)
             code = "연결 실패" if r is None else r.status_code
-            if code == 404 and label != "토큰":
+            if code == 404 and label == "토큰 없이":
                 if name == "retail":  # 수집기가 제일 먼저 만드는 파일인데 없으면 GH_REPO·DATA_BRANCH가 틀린 것
                     self.errors[name] = f"404 — GH_REPO '{self.repo}' · DATA_BRANCH '{self.branch}' 확인"
                 else:
