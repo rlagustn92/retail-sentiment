@@ -438,3 +438,22 @@ def test_stress_and_hy_rows():
     keys = {r["key"]: r for r in rows}
     assert "공식 하이일드 스프레드 3.50%" in keys["credit"]["now"]
     assert keys["stress"]["state"] == "아직" and keys["stress"]["stats"]["1개월"]["n"] == 2
+
+
+def test_etf_flows():
+    """좌수 변화 × NAV = 순유입, 새로 상장한 날·분할한 날은 0"""
+    from core import krx
+    assert krx.etf_group("KODEX 레버리지", "코스피 200") == "k200_lev"
+    assert krx.etf_group("KODEX 200선물인버스2X", "코스피 200 선물 인버스 2X 지수") == "k200_inv2"
+    assert krx.etf_group("KODEX 코스닥150선물인버스", "코스닥 150 선물 인버스 지수") == "kq_inv"
+    assert krx.etf_group("KODEX 반도체레버리지", "KRX 반도체") == "other_lev"
+    assert krx.etf_group("KODEX 200", "코스피 200") is None
+    cols = ["code", "name", "idx", "group", "units", "nav", "aum"]
+    prev = pd.DataFrame([["A", "KODEX 레버리지", "", "k200_lev", 1000, 20000, 2e7],
+                         ["B", "KODEX 200선물인버스2X", "", "k200_inv2", 500, 2000, 1e6]], columns=cols)
+    cur = pd.DataFrame([["A", "KODEX 레버리지", "", "k200_lev", 1500, 21000, 3.15e7],     # 500좌 × 21,000원 유입
+                        ["B", "KODEX 200선물인버스2X", "", "k200_inv2", 1000, 1000, 1e6],  # 2:1 분할 → 0
+                        ["C", "새 레버리지", "", "k200_lev", 300, 10000, 3e6]], columns=cols)  # 새로 상장 → 0
+    rows = {r["group"]: r for r in krx.etf_flows(prev, cur, pd.Timestamp("2026-11-20").date())}
+    assert rows["k200_lev"]["flow"] == round(500 * 21000 / 1e8, 2) and rows["k200_lev"]["n"] == 2
+    assert rows["k200_inv2"]["flow"] == 0 and rows["kq_lev"]["n"] == 0

@@ -28,6 +28,7 @@ FILES = {
     "us_stress": "us_stress.csv",            # date, series(STLFSI4·NFCI), value — 연준 금융 스트레스 (FRED, 1971~)
     "kr_vol_ep": "kr_vol_ep.csv",            # start, end, days, peak, peak_ratio — VKOSPI 급등 구간 (KRX 원본에서 계산한 결과만)
     "kr_vol_now": "kr_vol_now.csv",          # date, vkospi, median, ratio, since, n — 지금 값 한 줄 (덮어씀)
+    "kr_etf_flow": "kr_etf_flow.csv",        # date, group, flow(억원), aum(억원), n — 레버리지·인버스 ETF 묶음별 순유입 (KRX에서 계산한 결과만)
     "runs": "runs.csv",                      # ts, mode, ok, secs, note — 수집기가 돌 때마다 한 줄
 }
 KEYS = {"retail": ["bucket", "sym"], "putcall": ["date"], "stocktwits": ["ts", "sym"],
@@ -35,12 +36,12 @@ KEYS = {"retail": ["bucket", "sym"], "putcall": ["date"], "stocktwits": ["ts", "
         "kr_intraday": ["ts", "market"], "kr_market": ["date", "market"], "kr_hist_market": ["date", "market"],
         "kr_hist_sector": ["date", "sector"], "kr_index": ["date", "market"], "kr_rank": ["kind", "code"],
         "us_breadth": ["date"], "us_credit": ["date"], "kr_breadth": ["date"], "runs": ["ts", "mode"],
-        "us_stress": ["date", "series"], "kr_vol_ep": ["start"], "kr_vol_now": ["date"]}
+        "us_stress": ["date", "series"], "kr_vol_ep": ["start"], "kr_vol_now": ["date"], "kr_etf_flow": ["date", "group"]}
 DATE_COLS = {"retail": ["bucket"], "stocktwits": ["ts"], "score": ["ts"], "putcall": ["date"],
              "news": ["ts"], "finra": ["date"], "fred": ["date"], "kr_intraday": ["ts"], "kr_market": ["date"],
              "kr_hist_market": ["date"], "kr_hist_sector": ["date"], "kr_index": ["date"],
              "us_breadth": ["date"], "us_credit": ["date"], "kr_breadth": ["date"], "runs": ["ts"],
-             "us_stress": ["date"], "kr_vol_ep": ["start", "end"], "kr_vol_now": ["date", "since"]}
+             "us_stress": ["date"], "kr_vol_ep": ["start", "end"], "kr_vol_now": ["date", "since"], "kr_etf_flow": ["date"]}
 
 
 def _parse(name: str, text: str) -> pd.DataFrame:

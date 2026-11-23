@@ -308,6 +308,38 @@ def update_kr_hist(st: LocalStore, since):
         f"({(datetime.now(timezone.utc) - t0).seconds}초)")
 
 
+def update_kr_etf(st: LocalStore, now: datetime):
+    """레버리지·곱버스 ETF 자금 흐름 (KRX Open API ETF 일별매매정보): 상장좌수 변화 × NAV.
+    원본은 저장하지 않고 묶음별 하루 순유입·순자산 합계만 남겨요. 처음엔 2016년부터, 그 뒤엔 최근 열흘만 다시."""
+    key = os.environ.get("KRX_KEY") or None
+    if not key:
+        log("KRX_KEY 없음 — ETF 자금 흐름 건너뜀")
+        return
+    old = st.read("kr_etf_flow")
+    today = pd.Timestamp(now).tz_convert("Asia/Seoul").date()
+    start = krx.ETF_START if old.empty else (pd.to_datetime(old["date"]).max() - pd.Timedelta(days=10)).date()
+    t0, prev, total, fails, last = datetime.now(timezone.utc), None, 0, [], None
+    for y in range(start.year, today.year + 1):  # 한 해씩 계산하고 바로 저장 (중간에 끊겨도 이어서)
+        days = krx.weekdays(max(start, date(y, 1, 1)), min(today, date(y, 12, 31)))
+        got, f = krx.etf_range(days, key)
+        fails += f
+        rows = []
+        for d, df in got:
+            if prev is not None:
+                rows += krx.etf_flows(prev, df, d)
+            prev, last = df, (d, df)
+        if rows:
+            out = pd.DataFrame(rows)
+            out["date"] = pd.to_datetime(out["date"]).dt.tz_localize("UTC")
+            st.append("kr_etf_flow", out)
+            total += len(out) // len(krx.ETF_GROUPS)
+    if last:
+        d, df = last
+        top = df.sort_values("aum", ascending=False).groupby("group").head(2)
+        log("ETF 묶음 확인 (" + str(d) + "): " + " / ".join(f"{g}: {', '.join(x['name'])}" for g, x in top.groupby("group")))
+    log(f"ETF 자금 흐름 {start}~: {total}일 계산 · 실패 {len(fails)}일 ({(datetime.now(timezone.utc) - t0).seconds}초)")
+
+
 def attempt(name: str, fn, *args):
     """한 가지가 실패해도 나머지 수집은 계속"""
     try:
@@ -398,8 +430,9 @@ def run():
     if args.mode in ("kr", "kr_daily", "kr_hist", "kr_vol"):  # 한국 시장은 알파카 키 없이
         st = LocalStore(args.data)
         now = datetime.now(timezone.utc)
-        if args.mode == "kr_vol":  # VKOSPI만 (처음 채우기·점검용)
-            update_kr_vol(st, now)
+        if args.mode == "kr_vol":  # KRX만 (VKOSPI·ETF 자금 흐름 처음 채우기·점검용)
+            attempt("VKOSPI", update_kr_vol, st, now)
+            attempt("ETF 자금 흐름", update_kr_etf, st, now)
             return
         if args.mode != "kr_hist":
             update_kr(st, now, daily=args.mode == "kr_daily")
@@ -408,6 +441,7 @@ def run():
         if args.mode in ("kr_daily", "kr_hist"):
             attempt("한국 과거 수급", update_kr_hist, st, pd.Timestamp(args.since).date())
             attempt("VKOSPI", update_kr_vol, st, now)
+            attempt("ETF 자금 흐름", update_kr_etf, st, now)
             trim(st)
         return
 
