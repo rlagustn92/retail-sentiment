@@ -408,6 +408,13 @@ def us_status(m: MarketData, runs) -> list[dict]:
     return rows + run_row(runs, ("intraday", "daily", "backfill", "breadth"), "미국 수집기 마지막 실행")
 
 
+def snap_label(lbl: str | None) -> str:
+    """Streamlit의 '실시간'은 페이지에선 만든 시각 기준이라 시각으로 바꿔 적어요"""
+    if not lbl:
+        return "장 대기"
+    return lbl.replace("실시간", f"{pd.Timestamp(NOW).tz_convert(KST):%H:%M} 기준")
+
+
 def us_pages(m: MarketData, res: dict, b: dict | None, runs) -> dict[str, Page]:
     sm = market_summary(res)
     items = [("all", "전체", sm["panic"])] + [(k, config.GROUPS[k]["name"], res[k].panic)
@@ -425,7 +432,7 @@ def us_pages(m: MarketData, res: dict, b: dict | None, runs) -> dict[str, Page]:
     if b:
         p.add(ui.bottom_badge(b["us"], b["kr"]))
     spx = res["spx"]
-    p.card(ui.market_hero(sm["panic"], sm["title"], sm["detail"], sm["hot"], spx.session_label or "장 대기", sm["inst"], sm["inst_hot"]))
+    p.card(ui.market_hero(sm["panic"], sm["title"], sm["detail"], sm["hot"], snap_label(spx.session_label), sm["inst"], sm["inst_hot"]))
     idx_flow = [res[k] for k in config.INDEX_KEYS if res[k].flow]
     if idx_flow:
         p.card(ui.flow_summary(idx_flow, sm["inst_hot"]))
@@ -451,7 +458,7 @@ def us_pages(m: MarketData, res: dict, b: dict | None, runs) -> dict[str, Page]:
         p = Page(r.name)
         p.add(top(m.market_open), ui.market_switch("us"), ui.nav(k, items))
         tops = sorted([i for i in r.indicators.values() if i.score is not None and i.score >= 60], key=lambda i: -i.score)[:3]
-        p.card(ui.hero(r.panic, r.headline, r.detail, r.price, r.chg, r.bad_news, r.session_label or "장 대기",
+        p.card(ui.hero(r.panic, r.headline, r.detail, r.price, r.chg, r.bad_news, snap_label(r.session_label),
                        [(SHORT.get(i.key, i.title), i.display) for i in tops], title=r.name, etf=r.etf, flow=g["flow"],
                        flow_chg=r.flow_chg, inst=r.inst))
         if r.flow:
