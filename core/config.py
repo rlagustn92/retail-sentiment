@@ -131,7 +131,9 @@ WEIGHTS = {
 }
 
 # FRED에서 받는 시리즈: 하이일드 채권 스프레드 (ICE BofA US High Yield OAS, %p)
-FRED_SERIES = {"credit": "BAMLH0A0HYM2"}
+FRED_SERIES = {"credit": "BAMLH0A0HYM2"}   # FRED가 최근 3년치만 줘요
+# 연준 금융 스트레스 지수 (매주): 과거 위기와 비교용이라 처음부터 다 받아 따로 보관 (us_stress.csv)
+FRED_STRESS = {"STLFSI4": "1993-12-31", "NFCI": "1971-01-08"}
 FINRA_LOOKBACK = 250    # FINRA 장외 공매도: 최근 몇 거래일을 채워 둘지 (약 1년)
 
 # 기준치(과거 기록)가 부족할 때 쓰는 고정 눈금: (0점 값, 100점 값)

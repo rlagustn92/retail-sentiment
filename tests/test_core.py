@@ -379,3 +379,62 @@ def test_breadth_thrust_and_washout():
     close = pd.DataFrame({"A": range(1, 301), "B": range(300, 0, -1)}, index=pd.bdate_range("2020-01-01", periods=300), dtype=float)
     b = bottom.breadth_from_closes(close)
     assert (b["adv"] == 1).all() and (b["dec"] == 1).all() and b["above50"].iloc[-1] == 0.5
+
+
+def test_vol_episodes_and_state(tmp_path):
+    """VKOSPI 급등(1년 중앙값의 1.5배↑) → 꺾임(1.2배↓) 구간, 공개 파일로 저장했다 읽어도 같은 상태"""
+    from core import bottom
+    from core.store import LocalStore
+    idx = pd.bdate_range("2015-01-01", periods=600)
+    v = pd.Series(15.0, index=idx)
+    v.iloc[400:410] = 30.0           # 2배 급등 10일 → 꺾임
+    v.iloc[590:] = 25.0              # 지금 급등 중
+    ep, now = bottom.vol_episodes(v)
+    assert len(ep) == 2 and ep["start"].iloc[0] == idx[400] and ep["end"].iloc[0] == idx[410]
+    assert pd.isna(ep["end"].iloc[1]) and now["ratio"] > 1.5
+    st = LocalStore(tmp_path)
+    st.write("kr_vol_ep", ep)
+    st.write("kr_vol_now", pd.DataFrame([now]))
+    vs = bottom.vol_state(st.read("kr_vol_ep"), st.read("kr_vol_now"))
+    assert vs["in_ep"] and vs["days"] == 10 and vs["ends"] == [idx[410]] and not vs["resolved_recent"]
+    kospi = pd.DataFrame({"date": pd.to_datetime(idx).tz_localize("UTC"), "market": "코스피",
+                          "close": range(100, 700), "chg": 0.0})
+    rows = bottom.checklist_kr(None, kospi, None, st.read("kr_vol_ep"), st.read("kr_vol_now"))
+    r = [x for x in rows if x["key"] == "kr_vkospi"][0]
+    assert r["state"] == "진행 중" and r["stats"]["1개월"]["n"] == 1 and "compare" in r
+
+
+def test_krx_raw_roundtrip(tmp_path):
+    """KRX 원본은 키로 암호화해 보관, 다른 키로는 못 풀어요 (→ 처음부터 다시 받기)"""
+    from core import krx
+    df = pd.DataFrame({"date": pd.to_datetime(["2026-11-19", "2026-11-20"]), "open": [50.0, 52.27],
+                       "high": [51.0, 53.81], "low": [49.0, 52.07], "close": [50.5, 53.18]})
+    p = tmp_path / "kr_vkospi.enc"
+    krx.save_raw(df, p, "A" * 40)
+    assert b"53.18" not in p.read_bytes()
+    back = krx.load_raw(p, "A" * 40)
+    assert back["close"].tolist() == [50.5, 53.18] and back["date"].iloc[1] == pd.Timestamp("2026-11-20")
+    assert krx.load_raw(p, "B" * 40) is None
+    assert len(krx.weekdays(pd.Timestamp("2026-11-20").date(), pd.Timestamp("2026-11-24").date())) == 3
+
+
+def test_stress_and_hy_rows():
+    """연준 스트레스: 0 아래로 내려왔다 1을 다시 넘은 첫 주만 신호 / 공식 하이일드 스프레드는 신용 행에 붙어요"""
+    from core import bottom
+    weeks = pd.date_range("2015-01-02", periods=400, freq="W-FRI")
+    val = pd.Series(-0.5, index=weeks)
+    val.iloc[100:110] = 1.5          # 신호 1
+    val.iloc[110:112] = 0.5
+    val.iloc[112:115] = 1.2          # 0 아래로 안 내려갔다 다시 넘음 → 같은 사건
+    val.iloc[200:205] = 2.0          # 신호 2
+    stress = pd.DataFrame({"date": weeks, "series": "STLFSI4", "value": val.values})
+    ss = bottom.stress_state(stress)
+    assert ss["starts"] == [weeks[100], weeks[200]] and ss["now"] == -0.5
+    days = pd.bdate_range("2014-01-01", "2023-01-01")
+    spx = pd.Series(range(len(days)), index=days, dtype=float) + 1000
+    credit = pd.DataFrame({"date": days, "hyg": 80.0, "ief": 100.0})
+    fred_df = pd.DataFrame({"date": days[-200:], "series": "BAMLH0A0HYM2", "value": 3.5})
+    rows = bottom.checklist_us(spx, None, None, None, None, credit, None, None, fred_df, stress)
+    keys = {r["key"]: r for r in rows}
+    assert "공식 하이일드 스프레드 3.50%" in keys["credit"]["now"]
+    assert keys["stress"]["state"] == "아직" and keys["stress"]["stats"]["1개월"]["n"] == 2

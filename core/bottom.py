@@ -268,6 +268,89 @@ def big_panic(hist_market: pd.DataFrame, mult: float = 3.0) -> dict | None:
             "recent": bool(sig and (strength.index[-1] - sig[-1]).days <= 7), "since": int(big.index.min().year)}
 
 
+# ---------------------------------------------------------------- 한국: VKOSPI 공포 급등·꺾임
+VOL_HI, VOL_LO, VOL_WIN = 1.5, 1.2, 250
+VOL_EP_COLS = ["start", "end", "days", "peak", "peak_ratio"]
+
+
+def vol_episodes(v: pd.Series, hi: float = VOL_HI, lo: float = VOL_LO, window: int = VOL_WIN) -> tuple[pd.DataFrame, dict] | None:
+    """VKOSPI ÷ 직전 1년(250거래일) 중앙값. 1.5배를 넘으면 공포 급등(시작), 1.2배 아래로 내려오면 꺾임(끝).
+    한국엔 VIX3M 같은 3개월물 지수가 없어서, 미국 VIX 기간구조 대신 'VKOSPI가 자기 평소 수준보다 얼마나 높은지'로 봐요.
+    수집기가 KRX 원본으로 계산하고, 공개 파일엔 이 결과(구간 날짜·최고치·지금 값)만 남겨요."""
+    v = _naive(v)
+    if len(v) < window + 20:
+        return None
+    med = v.rolling(window, min_periods=int(window * 0.8)).median().shift(1)
+    ratio = (v / med).dropna()
+    eps, start = [], None
+    for d, x in ratio.items():
+        if start is None and x >= hi:
+            start = d
+        elif start is not None and x < lo:
+            eps.append({"start": start, "end": d, "days": int(len(ratio[start:d]) - 1),
+                        "peak": float(v[start:d].max()), "peak_ratio": float(ratio[start:d].max())})
+            start = None
+    if start is not None:  # 지금 급등 중
+        eps.append({"start": start, "end": pd.NaT, "days": int(len(ratio[start:])),
+                    "peak": float(v[start:].max()), "peak_ratio": float(ratio[start:].max())})
+    now = {"date": ratio.index[-1], "vkospi": float(v.iloc[-1]), "median": float(med.iloc[-1]),
+           "ratio": float(ratio.iloc[-1]), "since": v.index.min(), "n": int(len(v))}
+    return pd.DataFrame(eps, columns=VOL_EP_COLS), now
+
+
+def vol_state(ep: pd.DataFrame | None, now: pd.DataFrame | None) -> dict | None:
+    """수집기가 남긴 결과(kr_vol_ep·kr_vol_now)를 지금 상태로"""
+    if now is None or now.empty:
+        return None
+    n = now.iloc[-1]
+
+    def nv(x):
+        t = pd.to_datetime(x)
+        return t.tz_localize(None) if getattr(t, "tzinfo", None) is not None else t
+    e = ep.copy() if ep is not None and len(ep) else pd.DataFrame(columns=VOL_EP_COLS)
+    for c in ("start", "end"):
+        e[c] = pd.to_datetime(e[c], utc=True).dt.tz_localize(None)
+    e = e.sort_values("start")
+    closed, open_ = e[e["end"].notna()], e[e["end"].isna()]
+    d = nv(n["date"])
+    in_ep = len(open_) > 0
+    return {"date": d, "vkospi": float(n["vkospi"]), "median": float(n["median"]), "ratio": float(n["ratio"]),
+            "since": nv(n["since"]), "in_ep": in_ep, "days": int(open_["days"].iloc[-1]) if in_ep else 0,
+            "starts": list(e["start"]), "ends": list(closed["end"]), "durations": sorted(int(x) for x in closed["days"]),
+            "resolved_recent": bool(len(closed) and not in_ep and (d - closed["end"].max()).days <= 7),
+            "last_end": closed["end"].max() if len(closed) else None,
+            "peak": e.loc[e["peak"].idxmax()] if len(e) else None}
+
+
+# ---------------------------------------------------------------- 미국: 금융 스트레스 (세인트루이스 연준)
+def stress_state(stress: pd.DataFrame | None, hi: float = 1.0, lo: float = 0.0) -> dict | None:
+    """STLFSI4: 0이 평균, 1 = 평균보다 1표준편차 높은 스트레스. 0 아래로 내려왔다가 다시 1을 넘은 첫 주를 신호로"""
+    s = _series(stress, "value", where={"series": "STLFSI4"}) if stress is not None and len(stress) else pd.Series(dtype=float)
+    if len(s) < 300:
+        return None
+    starts, armed = [], True
+    for d, v in s.items():
+        if armed and v >= hi:
+            starts.append(d)
+            armed = False
+        elif not armed and v < lo:
+            armed = True
+    nfci = _series(stress, "value", where={"series": "NFCI"})
+    peaks = {y: float(s[s.index.year == y].max()) for y in (2008, 2020) if (s.index.year == y).any()}
+    return {"now": float(s.iloc[-1]), "date": s.index[-1], "starts": starts, "since": int(s.index.min().year),
+            "recent": bool(starts and (s.index[-1] - starts[-1]).days <= 28), "peaks": peaks,
+            "nfci": float(nfci.iloc[-1]) if len(nfci) else None}
+
+
+def hy_official(fred_df: pd.DataFrame | None) -> dict | None:
+    """공식 하이일드 스프레드 (ICE BofA, FRED). FRED가 최근 3년치만 줘서 위치는 그 안에서만 봐요"""
+    s = _series(fred_df, "value", where={"series": "BAMLH0A0HYM2"}) if fred_df is not None and len(fred_df) else pd.Series(dtype=float)
+    if len(s) < 60:
+        return None
+    return {"now": float(s.iloc[-1]), "date": s.index[-1], "pct": float((s <= s.iloc[-1]).mean()),
+            "years": max(1, round((s.index[-1] - s.index[0]).days / 365))}
+
+
 # ---------------------------------------------------------------- 데이터 받기
 def cboe_hist(name: str) -> pd.Series:
     """CBOE 일별 종가 (SPX는 1975년~, VIX 1990년~, VIX3M 2009년~)"""
@@ -293,7 +376,8 @@ def _since_dates(dates, since_year):
 
 def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series | None, now_ratio: float | None,
                  breadth: pd.DataFrame | None, credit: pd.DataFrame | None, flow: dict | None = None,
-                 fg: dict | None = None) -> list[dict]:
+                 fg: dict | None = None, fred_df: pd.DataFrame | None = None,
+                 stress: pd.DataFrame | None = None) -> list[dict]:
     rows = []
     spx = _naive(spx) if spx is not None and len(spx) else None
     # ① 항복: 시장 폭 바닥
@@ -349,14 +433,32 @@ def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series 
         rows.append(_row("us_zbt", "확인", "브레스 스러스트 (츠바이크)", "데이터 없음", "S&P500 구성종목 기록을 쌓는 중", "", ""))
     # 참고: 신용
     cs = credit_state(credit)
+    hy = hy_official(fred_df)
     if cs:
+        now = f"3개월 고점 대비 {cs['dd']:+.1%} · {cs['level']}"
+        how = (f"주식 공포가 회사 부도 걱정(신용)까지 번졌는지 봐요. {cs['since']}년 이후 하위 10%({cs['p90']:+.1%}) 아래면 긴장, "
+               f"하위 2%({cs['p98']:+.1%}) 아래면 항복 수준이에요. 신용이 멀쩡하면 아직 진짜 항복은 아니라고 봐요.")
+        if hy:
+            now += f" · 공식 하이일드 스프레드 {hy['now']:.2f}% ({hy['date']:%m/%d})"
+            how += (f" 공식 스프레드(ICE BofA, FRED)는 최근 {hy['years']}년 중 낮은 쪽부터 {hy['pct']:.0%} 위치예요. "
+                    "FRED가 최근 3년치만 줘서 과거 위기와의 비교는 HYG÷IEF로 해요.")
         rows.append(_row("credit", "참고", "신용 시장 (하이일드 채권 ÷ 국채)",
-                         {"항복": "켜짐", "긴장": "진행 중", "평온": "아직"}[cs["level"]],
-                         f"3개월 고점 대비 {cs['dd']:+.1%} · {cs['level']}",
-                         "HYG(하이일드 채권 ETF) ÷ IEF(중기 국채 ETF)가 3개월 고점에서 얼마나 빠졌는지예요.",
-                         f"주식 공포가 회사 부도 걱정(신용)까지 번졌는지 봐요. {cs['since']}년 이후 하위 10%({cs['p90']:+.1%}) 아래면 긴장, "
-                         f"하위 2%({cs['p98']:+.1%}) 아래면 항복 수준이에요. 신용이 멀쩡하면 아직 진짜 항복은 아니라고 봐요.",
+                         {"항복": "켜짐", "긴장": "진행 중", "평온": "아직"}[cs["level"]], now,
+                         "HYG(하이일드 채권 ETF) ÷ IEF(중기 국채 ETF)가 3개월 고점에서 얼마나 빠졌는지예요.", how,
                          None, None, "", "미국 신용"))
+    # 참고: 금융 스트레스 (연준)
+    ss = stress_state(stress)
+    if ss and spx is not None:
+        peaks = " · ".join(f"{y}년 {v:.1f}" for y, v in ss["peaks"].items())
+        rows.append(_row("stress", "참고", "금융 스트레스 지수 (세인트루이스 연준)",
+                         "켜짐" if ss["now"] >= 1 else "진행 중" if ss["now"] >= 0 else "아직",
+                         f"{ss['now']:+.2f} ({ss['date']:%m/%d} 주)" + (f" · 시카고 연준 NFCI {ss['nfci']:+.2f}" if ss["nfci"] is not None else ""),
+                         "연준이 금리·신용 스프레드·변동성 등 18가지로 매주 만드는 금융시장 스트레스 지수예요. "
+                         "0이 평균이고, 1이면 평균보다 1표준편차 높은 스트레스예요.",
+                         "주가만 빠지고 이 지수가 낮으면 금융 시스템까지 겁먹은 건 아니에요"
+                         + (f" (최고치: {peaks})" if peaks else "") + ". 표는 0 아래에서 다시 1을 처음 넘은 주에 샀다면이에요.",
+                         forward_stats(spx, ss["starts"]), base_stats(spx[spx.index >= f"{ss['since']}-01-01"]),
+                         f"{len(ss['starts'])}번 · {ss['since']}년~", "S&P500"))
     # 참고: CNN 공포탐욕 (백미러)
     if fg and fg.get("score") is not None:
         rows.append(_row("fg", "참고", "CNN 공포탐욕지수 (백미러)", "참고",
@@ -368,11 +470,14 @@ def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series 
     return rows
 
 
-def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, breadth: pd.DataFrame | None) -> list[dict]:
+def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, breadth: pd.DataFrame | None,
+                 vol_ep: pd.DataFrame | None = None, vol_now: pd.DataFrame | None = None) -> list[dict]:
     rows = []
     kospi = _series(index, "close", where={"market": "코스피"}) if index is not None and len(index) else pd.Series(dtype=float)
     ok = len(kospi) > 300
-    base = base_stats(kospi) if ok else None
+
+    def base_from(since):  # 비교 기준(아무 날)도 신호와 같은 기간으로
+        return base_stats(kospi[kospi.index >= pd.Timestamp(f"{since}-01-01")])
     w = washout(breadth)
     if w and ok:
         on = w["active"] or (w["signals"] and (pd.Timestamp.now() - w["signals"][-1]).days <= 10)
@@ -380,7 +485,7 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
                          f"시총 상위 300 중 50일선 위 {w['now']:.0%}",
                          "코스피·코스닥 시총 상위 300 종목 중 50일 이동평균선 위에 있는 종목 비율이에요.",
                          "15% 아래면 거의 모든 종목이 무너진 투매형 바닥 상태예요. 바닥권 조건이고, 반등 확인은 아래 신호로 봐요.",
-                         forward_stats(kospi, w["signals"]), base, f"{len(w['signals'])}번 · {w['since']}년~", "코스피"))
+                         forward_stats(kospi, w["signals"]), base_from(w["since"]), f"{len(w['signals'])}번 · {w['since']}년~", "코스피"))
     else:
         rows.append(_row("kr_washout", "항복", "시장 폭 바닥 (50일선 위 종목 15% 아래)", "데이터 없음",
                          "시장 폭 기록을 쌓는 중", "", ""))
@@ -391,7 +496,7 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
                          "외국인+기관이 직전 60거래일 평균 크기의 3배 넘게 순매도한 날이에요 (시총 상위 300 종목 합).",
                          "큰손이 한꺼번에 던지는 공포 정점에 가까운 날이에요. 과거엔 이런 날 뒤 몇 달 성적이 평소보다 나았지만, "
                          "그 뒤 더 빠진 경우도 있었어요(최악 값 참고).",
-                         forward_stats(kospi, bp["signals"]), base, f"{len(bp['signals'])}번 · {bp['since']}년~", "코스피"))
+                         forward_stats(kospi, bp["signals"]), base_from(bp["since"]), f"{len(bp['signals'])}번 · {bp['since']}년~", "코스피"))
     fs = foreign_stop(hist_market)
     if fs and ok:
         rows.append(_row("kr_foreign", "참고", "외국인 매도 멈춤", "켜짐" if fs["recent"] else
@@ -400,7 +505,7 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
                          f"오늘 외국인 순매수 · 최근 5일 합 {fs['five']:,.0f}억",
                          "외국인이 5일 넘게 연속으로, 그것도 최근 1년 중 센 쪽(하위 20%)으로 팔다가 처음 순매수로 돌아선 날이에요.",
                          "흔히 '외국인이 팔다 멈추면 반등'이라고 하는데, 2020년 이후 데이터로는 효과가 없어서 개수에 넣지 않고 참고로만 보여줘요.",
-                         forward_stats(kospi, fs["signals"]), base, f"{len(fs['signals'])}번 · {fs['since']}년~", "코스피"))
+                         forward_stats(kospi, fs["signals"]), base_from(fs["since"]), f"{len(fs['signals'])}번 · {fs['since']}년~", "코스피"))
     bt = breadth_thrust(breadth)
     if bt and ok:
         rows.append(_row("kr_zbt", "확인", "브레스 스러스트 (한국)",
@@ -408,9 +513,32 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
                          f"상승 종목 비율 10일 평균 {bt['now']:.0%} (최근 10일 최저 {bt['low10']:.0%})",
                          "시총 상위 300 종목 중 오른 종목 비율의 10일 평균이 10거래일 안에 40% 아래에서 61.5% 위로 치솟는 것.",
                          "미국 츠바이크 신호를 한국 대형주에 같은 방식으로 적용했어요.",
-                         forward_stats(kospi, bt["signals"]), base, f"{len(bt['signals'])}번 · {bt['since']}년~", "코스피"))
+                         forward_stats(kospi, bt["signals"]), base_from(bt["since"]), f"{len(bt['signals'])}번 · {bt['since']}년~", "코스피"))
     else:
         rows.append(_row("kr_zbt", "확인", "브레스 스러스트 (한국)", "데이터 없음", "시장 폭 기록을 쌓는 중", "", ""))
+    # ② 반등 확인: VKOSPI 공포 꺾임 (미국 VIX 기간구조 해소의 한국판)
+    vs = vol_state(vol_ep, vol_now)
+    if vs and ok:
+        since = max(vs["since"], kospi.index.min())          # 코스피 기록이 있는 기간만 통계에
+        starts = [d for d in vs["starts"] if d >= since]
+        ends = [d for d in vs["ends"] if d >= since]
+        st_ = "켜짐" if vs["resolved_recent"] else "진행 중" if vs["in_ep"] else "아직"
+        now = f"VKOSPI {vs['vkospi']:.1f} ({vs['date']:%m/%d}) · 1년 중앙값 {vs['median']:.1f}의 {vs['ratio']:.2f}배"
+        now += f" · 급등 {vs['days']}일째" if vs["in_ep"] else (f" · 마지막 급등 {vs['last_end']:%y.%m.%d} 꺾임" if vs["last_end"] is not None else "")
+        how = ("평소엔 VKOSPI가 지난 1년 중앙값 근처에서 움직여요. 1.5배를 넘으면 옵션 시장에 공포가 몰린 '급등', "
+               "다시 1.2배 아래로 내려오면 '꺾임'으로 봐요. 미국 VIX 기간구조 역전·해소와 같은 생각인데, "
+               "한국엔 3개월물 공포 지수가 없어서 자기 평소 수준과 비교해요.")
+        if vs["durations"]:
+            how += f" {since.year}년 이후 급등은 보통 {int(np.median(vs['durations']))}거래일 이어졌어요."
+        if vs["peak"] is not None:
+            pk = vs["peak"]
+            how += f" 가장 셌던 건 {pd.Timestamp(pk['start']):%Y년 %m월}에 시작한 급등(최고 {pk['peak']:.1f})이에요."
+        rows.append(_row("kr_vkospi", "확인", "VKOSPI 공포 꺾임", st_, now,
+                         "코스피200 옵션 가격으로 계산한 한국판 VIX예요 (KRX 정보데이터, 전 거래일 확정치).", how,
+                         forward_stats(kospi, ends), base_from(since.year), f"{len(ends)}번 · {since.year}년~", "코스피"))
+        rows[-1]["compare"] = ("급등 첫날 샀다면", forward_stats(kospi, starts))
+    elif vol_now is not None:
+        rows.append(_row("kr_vkospi", "확인", "VKOSPI 공포 꺾임", "데이터 없음", "VKOSPI 기록을 쌓는 중 (KRX)", "", ""))
     return rows
 
 

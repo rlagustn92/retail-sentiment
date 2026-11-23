@@ -813,8 +813,17 @@ def c_bottom():
     ratio = vn["vix_now"] / vn["vix3m_now"] if vn.get("vix_now") and vn.get("vix3m_now") else None
     fg = get(c_fear_greed)
     us_rows = bottom.with_effect(bottom.checklist_us(spx, vix, v3, ratio, c_store("us_breadth"), c_store("us_credit"),
-                                                     get(us_flow_state), fg))
-    kr_rows = bottom.with_effect(bottom.checklist_kr(c_store("kr_hist_market"), c_store("kr_index"), c_store("kr_breadth")))
+                                                     get(us_flow_state), fg, c_store("fred"), c_store("us_stress")))
+    kr_rows = bottom.with_effect(bottom.checklist_kr(c_store("kr_hist_market"), c_store("kr_index"), c_store("kr_breadth"),
+                                                     c_store("kr_vol_ep"), c_store("kr_vol_now")))
+
+    def last(name, col="date", where=None):
+        df = c_store(name)
+        if df.empty or col not in df:
+            return None
+        if where:
+            df = df[df[where[0]] == where[1]]
+        return pd.to_datetime(df[col]).max() if len(df) else None
     ut, ud, uc = bottom.verdict(us_rows)
     kt, kd, kc = bottom.verdict(kr_rows)
     return {"us": {"rows": us_rows, "title": ut, "desc": ud, "cnt": uc},
@@ -822,7 +831,9 @@ def c_bottom():
             "dates": {"spx": spx.index.max() if spx is not None else None,
                       "us_breadth": pd.to_datetime(c_store("us_breadth")["date"]).max() if len(c_store("us_breadth")) else None,
                       "kr_breadth": pd.to_datetime(c_store("kr_breadth")["date"]).max() if len(c_store("kr_breadth")) else None,
-                      "kr_hist": pd.to_datetime(c_store("kr_hist_market")["date"]).max() if len(c_store("kr_hist_market")) else None}}
+                      "kr_hist": pd.to_datetime(c_store("kr_hist_market")["date"]).max() if len(c_store("kr_hist_market")) else None,
+                      "vkospi": last("kr_vol_now"), "hy": last("fred", where=("series", "BAMLH0A0HYM2")),
+                      "stress": last("us_stress", where=("series", "STLFSI4"))}}
 
 
 @st.fragment(run_every=300)
@@ -837,7 +848,7 @@ def render_bottom():
         st.markdown(ui.signal_rows(b["us"]["rows"], "🇺🇸 미국", "S&P500 기준 · 신호마다 '과거에 이 신호 뒤엔 어땠나'를 아무 날과 비교"),
                     unsafe_allow_html=True)
     with st.container(key="b_kr"):
-        st.markdown(ui.signal_rows(b["kr"]["rows"], "🇰🇷 한국", "코스피 기준 · 2020년 이후 기록으로 계산",
+        st.markdown(ui.signal_rows(b["kr"]["rows"], "🇰🇷 한국", "코스피 기준 · 수급·시장 폭은 2020년, VKOSPI는 2010년 이후 기록으로 계산",
                                    {"title": b["kr"]["title"], "desc": b["kr"]["desc"]}), unsafe_allow_html=True)
     d = b["dates"]
 
@@ -849,6 +860,12 @@ def render_bottom():
              "state": "정상" if d["us_breadth"] is not None else "없음", "note": "매일 미국 장 마감 뒤 이어 붙여요"},
             {"name": "한국 수급·시장 폭 (2020~)", "basis": f"수급 {dd(d['kr_hist'])} · 시장 폭 {dd(d['kr_breadth'])}까지",
              "state": "정상" if d["kr_hist"] is not None else "없음", "note": "매일 한국 장 마감 뒤(16:17) 이어 붙여요"},
+            {"name": "VKOSPI (KRX Open API)", "basis": f"{dd(d['vkospi'])} 확정치까지",
+             "state": "정상" if d["vkospi"] is not None else "없음",
+             "note": "KRX가 하루 뒤에 확정치를 줘요. 한국 장 마감 뒤(16:17) 받아서 보통 전 거래일 값이에요"},
+            {"name": "하이일드 스프레드 · 금융 스트레스 (FRED)", "basis": f"스프레드 {dd(d['hy'])} · 스트레스 {dd(d['stress'])} 주까지",
+             "state": "정상" if d["hy"] is not None or d["stress"] is not None else "없음",
+             "note": "스프레드는 매일, 스트레스 지수는 매주(금요일 기준) 나와요. 미국 장 마감 뒤 받아요"},
             {"name": "CNN 공포탐욕", "basis": "열 때 받아요 (30분 캐시)", "state": "정상" if b["fg"] else "없음", "note": ""}]
     with st.container(key="b_status"):
         st.markdown(ui.data_status(rows), unsafe_allow_html=True)
@@ -857,6 +874,8 @@ def render_bottom():
         "기관 내부 자료는 빠져 있어요.",
         "과거 통계는 표본이 적고 미래를 보장하지 않아요. 매수·매도 신호가 아니라 지금이 과거의 어떤 상황과 닮았는지 보는 참고예요.",
         "시장 폭은 지금 S&P500·시총 상위 300 종목으로 과거를 계산해서 그 사이 빠진 종목은 안 들어가 있어요(생존 편향).",
+        "VKOSPI: KRX 정보데이터시스템(한국거래소 Open API) 자료를 이용했어요. 하이일드 스프레드: ICE BofA US High Yield Index OAS "
+        "(ICE Data Indices, LLC), 금융 스트레스: St. Louis Fed Financial Stress Index · Chicago Fed NFCI — 모두 FRED에서 받아요.",
     ]), unsafe_allow_html=True)
 
 

@@ -25,17 +25,22 @@ FILES = {
     "us_breadth": "us_breadth.csv",          # date, adv, dec, unch, n, above50, above200, nh, nl (S&P500 구성종목)
     "us_credit": "us_credit.csv",            # date, hyg, ief, lqd, spy (일별 종가)
     "kr_breadth": "kr_breadth.csv",          # date, adv, dec, ... (시총 상위 300)
+    "us_stress": "us_stress.csv",            # date, series(STLFSI4·NFCI), value — 연준 금융 스트레스 (FRED, 1971~)
+    "kr_vol_ep": "kr_vol_ep.csv",            # start, end, days, peak, peak_ratio — VKOSPI 급등 구간 (KRX 원본에서 계산한 결과만)
+    "kr_vol_now": "kr_vol_now.csv",          # date, vkospi, median, ratio, since, n — 지금 값 한 줄 (덮어씀)
     "runs": "runs.csv",                      # ts, mode, ok, secs, note — 수집기가 돌 때마다 한 줄
 }
 KEYS = {"retail": ["bucket", "sym"], "putcall": ["date"], "stocktwits": ["ts", "sym"],
         "score": ["ts", "group"], "news": ["id"], "finra": ["date", "sym"], "fred": ["date", "series"],
         "kr_intraday": ["ts", "market"], "kr_market": ["date", "market"], "kr_hist_market": ["date", "market"],
         "kr_hist_sector": ["date", "sector"], "kr_index": ["date", "market"], "kr_rank": ["kind", "code"],
-        "us_breadth": ["date"], "us_credit": ["date"], "kr_breadth": ["date"], "runs": ["ts", "mode"]}
+        "us_breadth": ["date"], "us_credit": ["date"], "kr_breadth": ["date"], "runs": ["ts", "mode"],
+        "us_stress": ["date", "series"], "kr_vol_ep": ["start"], "kr_vol_now": ["date"]}
 DATE_COLS = {"retail": ["bucket"], "stocktwits": ["ts"], "score": ["ts"], "putcall": ["date"],
              "news": ["ts"], "finra": ["date"], "fred": ["date"], "kr_intraday": ["ts"], "kr_market": ["date"],
              "kr_hist_market": ["date"], "kr_hist_sector": ["date"], "kr_index": ["date"],
-             "us_breadth": ["date"], "us_credit": ["date"], "kr_breadth": ["date"], "runs": ["ts"]}
+             "us_breadth": ["date"], "us_credit": ["date"], "kr_breadth": ["date"], "runs": ["ts"],
+             "us_stress": ["date"], "kr_vol_ep": ["start", "end"], "kr_vol_now": ["date", "since"]}
 
 
 def _parse(name: str, text: str) -> pd.DataFrame:

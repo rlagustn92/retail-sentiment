@@ -4,7 +4,8 @@ python collector.py intraday           장중 15분마다: 개인 수급·Stockt
 python collector.py daily              장 마감 후: 남은 개인 수급 구간, 오늘 풋/콜 확정치, 오래된 기록 정리
 python collector.py backfill --days 10 처음 한 번: 과거 N거래일 개인 수급, 풋/콜, 뉴스 채우기
 
-환경변수: ALPACA_KEY, ALPACA_SECRET (필수), FINNHUB_KEY (있으면 뉴스 보충), FRED_KEY (권장, 없으면 키 없는 주소로 시도)
+환경변수: ALPACA_KEY, ALPACA_SECRET (필수), FINNHUB_KEY (있으면 뉴스 보충), FRED_KEY (권장, 없으면 키 없는 주소로 시도),
+         KRX_KEY (한국 수집: 있으면 VKOSPI)
 FINRA 장외 공매도는 키 없이 받아요. 빠진 날짜는 다음 실행 때 자동으로 채워요.
 """
 from __future__ import annotations
@@ -12,13 +13,13 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 
 import requests
 
-from core import bottom, cboe, config, finra, fred, kr, sources
+from core import bottom, cboe, config, finra, fred, kr, krx, sources
 from core import news as newsmod
 from core import retail_flow as rf
 from core.finnhub import Finnhub
@@ -27,7 +28,7 @@ from core.alpaca import Alpaca
 from core.metrics import ET, MarketData, build_all
 from core.store import LocalStore
 
-KEEP_DAYS = {"runs": 30, "retail": 100, "stocktwits": 60, "score": 45, "putcall": 400, "news": 4, "finra": 400, "fred": 800,
+KEEP_DAYS = {"runs": 30, "retail": 100, "stocktwits": 60, "score": 45, "putcall": 400, "news": 4, "finra": 400, "fred": 1200,
              "kr_intraday": 15, "kr_market": 800}
 DATE_COL = {"runs": "ts", "retail": "bucket", "stocktwits": "ts", "score": "ts", "putcall": "date", "news": "ts",
             "finra": "date", "fred": "date", "kr_intraday": "ts", "kr_market": "date"}
@@ -152,9 +153,66 @@ def update_finra(a: Alpaca, st: LocalStore, now: datetime):
 def update_fred(st: LocalStore, now: datetime):
     key = os.environ.get("FRED_KEY") or None
     for sid in config.FRED_SERIES.values():
-        df = fred.series(sid, (now - timedelta(days=400)).date(), key)
+        df = fred.series(sid, (now - timedelta(days=1200)).date(), key)  # FRED가 주는 최근 3년치 전부
         st.append("fred", df)
         log(f"FRED {sid} {len(df)}개, 최근 {df['date'].max().date() if len(df) else '-'}")
+    # 연준 금융 스트레스 (매주): 처음엔 전부, 그 뒤엔 최근 넉 달만 다시
+    have = st.read("us_stress")
+    for sid, first in config.FRED_STRESS.items():
+        full = have.empty or not (have["series"] == sid).any()
+        df = fred.series(sid, date.fromisoformat(first) if full else (now - timedelta(days=120)).date(), key)
+        st.append("us_stress", df)
+        log(f"FRED {sid} {len(df)}개{' (처음부터)' if full else ''}, 최근 {df['date'].max().date() if len(df) else '-'}")
+
+
+def update_kr_vol(st: LocalStore, now: datetime):
+    """VKOSPI (KRX Open API). 약관상 원본을 공개하면 안 돼서 원본은 암호화해 보관하고(kr_vkospi.enc),
+    공개 파일엔 급등 구간 날짜와 지금 값만 남겨요. 통계에 쓸 코스피 지수(네이버)도 2010년부터 채워요."""
+    key = os.environ.get("KRX_KEY") or None
+    if not key:
+        log("KRX_KEY 없음 — VKOSPI 건너뜀")
+        return
+    raw_path = st.root / "kr_vkospi.enc"
+    old = krx.load_raw(raw_path, key)
+    today = pd.Timestamp(now).tz_convert("Asia/Seoul").date()
+    if old is None or old.empty:
+        start = krx.VKOSPI_START
+        log("VKOSPI 원본이 없어서(또는 키가 바뀌어 못 풀어서) 2010년부터 받아요")
+        old = pd.DataFrame(columns=krx.COLS)
+    else:
+        start = (old["date"].max() - pd.Timedelta(days=10)).date()  # 최근 열흘은 다시 (늦게 확정된 값)
+    t0, got, fails = datetime.now(timezone.utc), 0, []
+    df = old
+    for y in range(start.year, today.year + 1):  # 한 해씩 받고 바로 저장 (중간에 끊겨도 이어서)
+        days = krx.weekdays(max(start, date(y, 1, 1)), min(today, date(y, 12, 31)))
+        new, f = krx.vkospi_range(days, key)
+        if f:
+            again, f = krx.vkospi_range(f, key, workers=1)
+            new = pd.concat([new, again], ignore_index=True)
+        fails += f
+        got += len(new)
+        if len(new):
+            df = pd.concat([df, new], ignore_index=True) if len(df) else new
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
+            krx.save_raw(df, raw_path, key)
+    if df.empty:
+        raise RuntimeError("VKOSPI를 하나도 못 받았어요")
+    res = bottom.vol_episodes(df.set_index("date")["close"])
+    msg = ""
+    if res:
+        ep, nw = res
+        st.write("kr_vol_ep", ep)
+        st.write("kr_vol_now", pd.DataFrame([nw]))
+        msg = f" · 급등 구간 {len(ep)}번 · 지금 1년 중앙값의 {nw['ratio']:.2f}배"
+    log(f"VKOSPI {got}일 받음 · 전체 {len(df)}일 ({df['date'].min():%Y-%m-%d}~{df['date'].max():%Y-%m-%d}) · "
+        f"실패 {len(fails)}일{msg} ({(datetime.now(timezone.utc) - t0).seconds}초)")
+    idx = st.read("kr_index")
+    if idx.empty or pd.to_datetime(idx["date"], utc=True).min() > pd.Timestamp("2010-02-01", tz="UTC"):
+        add = pd.concat([kr.index_history(m, date(2010, 1, 1)) for m in kr.MARKETS], ignore_index=True)
+        add["date"] = pd.to_datetime(add["date"]).dt.tz_localize("UTC")
+        st.append("kr_index", add)
+        log(f"코스피·코스닥 지수 2010년부터 {len(add)}행 채움")
 
 
 def update_kr(st: LocalStore, now: datetime, daily: bool):
@@ -331,21 +389,25 @@ def main():
 
 def run():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["intraday", "daily", "backfill", "breadth", "kr", "kr_daily", "kr_hist"])
+    ap.add_argument("mode", choices=["intraday", "daily", "backfill", "breadth", "kr", "kr_daily", "kr_hist", "kr_vol"])
     ap.add_argument("--days", type=int, default=10)
     ap.add_argument("--data", default="data")
     ap.add_argument("--since", default="2020-01-01", help="kr_hist: 이 날짜부터 한국 과거 수급을 채워요")
     args = ap.parse_args()
 
-    if args.mode in ("kr", "kr_daily", "kr_hist"):  # 한국 시장은 알파카 키 없이
+    if args.mode in ("kr", "kr_daily", "kr_hist", "kr_vol"):  # 한국 시장은 알파카 키 없이
         st = LocalStore(args.data)
         now = datetime.now(timezone.utc)
+        if args.mode == "kr_vol":  # VKOSPI만 (처음 채우기·점검용)
+            update_kr_vol(st, now)
+            return
         if args.mode != "kr_hist":
             update_kr(st, now, daily=args.mode == "kr_daily")
         if args.mode == "kr_daily" or (args.mode == "kr" and now.minute < 10 and kr.is_open(now)):
             attempt("한국 순위표", update_kr_rank, st)  # 장 마감 뒤 + 장중엔 한 시간에 한 번
         if args.mode in ("kr_daily", "kr_hist"):
             attempt("한국 과거 수급", update_kr_hist, st, pd.Timestamp(args.since).date())
+            attempt("VKOSPI", update_kr_vol, st, now)
             trim(st)
         return
 

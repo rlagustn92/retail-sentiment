@@ -9,10 +9,10 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "kr / kr_daily / kr_hist"
+        description: "kr / kr_daily / kr_hist / kr_vol(VKOSPI만)"
         default: kr_hist
         type: choice
-        options: [kr_hist, kr_daily, kr]
+        options: [kr_hist, kr_daily, kr, kr_vol]
       since:
         description: "kr_hist: 이 날짜부터 과거 수급을 채워요 (YYYY-MM-DD)"
         default: "2020-01-01"
@@ -50,6 +50,8 @@ jobs:
           fi
 
       - name: 수집
+        env:
+          KRX_KEY: ${{ secrets.KRX_KEY }}   # 있으면 VKOSPI (장 마감 뒤·과거 채우기 때)
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             MODE="${{ github.event.inputs.mode }}"
