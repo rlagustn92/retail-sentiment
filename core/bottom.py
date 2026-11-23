@@ -294,7 +294,8 @@ def vol_episodes(v: pd.Series, hi: float = VOL_HI, lo: float = VOL_LO, window: i
         eps.append({"start": start, "end": pd.NaT, "days": int(len(ratio[start:])),
                     "peak": float(v[start:].max()), "peak_ratio": float(ratio[start:].max())})
     now = {"date": ratio.index[-1], "vkospi": float(v.iloc[-1]), "median": float(med.iloc[-1]),
-           "ratio": float(ratio.iloc[-1]), "since": v.index.min(), "n": int(len(v))}
+           "ratio": float(ratio.iloc[-1]), "since": v.index.min(), "n": int(len(v)),
+           "pct_all": float((v <= v.iloc[-1]).mean()), "median_all": float(v.median())}  # 전체 기간 속 위치
     return pd.DataFrame(eps, columns=VOL_EP_COLS), now
 
 
@@ -314,7 +315,10 @@ def vol_state(ep: pd.DataFrame | None, now: pd.DataFrame | None) -> dict | None:
     closed, open_ = e[e["end"].notna()], e[e["end"].isna()]
     d = nv(n["date"])
     in_ep = len(open_) > 0
+    pa, ma = n.get("pct_all"), n.get("median_all")
     return {"date": d, "vkospi": float(n["vkospi"]), "median": float(n["median"]), "ratio": float(n["ratio"]),
+            "pct_all": None if pa is None or pd.isna(pa) else float(pa),
+            "median_all": None if ma is None or pd.isna(ma) else float(ma),
             "since": nv(n["since"]), "in_ep": in_ep, "days": int(open_["days"].iloc[-1]) if in_ep else 0,
             "starts": list(e["start"]), "ends": list(closed["end"]), "durations": sorted(int(x) for x in closed["days"]),
             "resolved_recent": bool(len(closed) and not in_ep and (d - closed["end"].max()).days <= 7),
@@ -523,19 +527,28 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
         starts = [d for d in vs["starts"] if d >= since]
         ends = [d for d in vs["ends"] if d >= since]
         st_ = "켜짐" if vs["resolved_recent"] else "진행 중" if vs["in_ep"] else "아직"
-        now = f"VKOSPI {vs['vkospi']:.1f} ({vs['date']:%m/%d}) · 1년 중앙값 {vs['median']:.1f}의 {vs['ratio']:.2f}배"
+        now = f"VKOSPI {vs['vkospi']:.1f} ({vs['date']:%m/%d})"
+        if vs["pct_all"] is not None:
+            now += f" · {vs['since']:%Y}년 이후 높은 쪽 상위 {max(1 - vs['pct_all'], 0.01):.0%} (전체 중앙값 {vs['median_all']:.1f})"
+        now += f" · 1년 중앙값 {vs['median']:.1f}의 {vs['ratio']:.2f}배"
         now += f" · 급등 {vs['days']}일째" if vs["in_ep"] else (f" · 마지막 급등 {vs['last_end']:%y.%m.%d} 꺾임" if vs["last_end"] is not None else "")
-        how = ("평소엔 VKOSPI가 지난 1년 중앙값 근처에서 움직여요. 1.5배를 넘으면 옵션 시장에 공포가 몰린 '급등', "
-               "다시 1.2배 아래로 내려오면 '꺾임'으로 봐요. 미국 VIX 기간구조 역전·해소와 같은 생각인데, "
-               "한국엔 3개월물 공포 지수가 없어서 자기 평소 수준과 비교해요.")
+        ends_stats, kb = forward_stats(kospi, ends), base_from(since.year)
+        works = effect(ends_stats, kb) == "과거 효과 있음"
+        how = ("VKOSPI가 지난 1년 중앙값의 1.5배를 넘으면 옵션 시장에 공포가 몰린 '급등', 다시 1.2배 아래로 내려오면 "
+               "'꺾임'으로 봐요. 미국 VIX 기간구조 역전·해소와 같은 생각인데, 한국엔 3개월물 공포 지수가 없어서 자기 평소 수준과 비교해요.")
+        how += (" 과거에도 꺾인 뒤 성적이 아무 날보다 나아서 반등 확인으로 세요." if works else
+                " 다만 한국에선 꺾인 날 산 성적이 아무 날보다 낫지 않았어요(아래 표, 급등 첫날 비교도 참고). "
+                "그래서 반등 확인 개수에 넣지 않고 참고로만 보여줘요.")
+        if vs["pct_all"] is not None and vs["pct_all"] >= 0.9 and vs["ratio"] < VOL_HI:
+            how += " 지금은 절대 수준은 높지만 올해 내내 높았던 탓에 '평소 대비 급등'으로는 안 잡혀요."
         if vs["durations"]:
             how += f" {since.year}년 이후 급등은 보통 {int(np.median(vs['durations']))}거래일 이어졌어요."
         if vs["peak"] is not None:
             pk = vs["peak"]
             how += f" 가장 셌던 건 {pd.Timestamp(pk['start']):%Y년 %m월}에 시작한 급등(최고 {pk['peak']:.1f})이에요."
-        rows.append(_row("kr_vkospi", "확인", "VKOSPI 공포 꺾임", st_, now,
+        rows.append(_row("kr_vkospi", "확인" if works else "참고", "VKOSPI 공포 꺾임", st_, now,
                          "코스피200 옵션 가격으로 계산한 한국판 VIX예요 (KRX 정보데이터, 전 거래일 확정치).", how,
-                         forward_stats(kospi, ends), base_from(since.year), f"{len(ends)}번 · {since.year}년~", "코스피"))
+                         ends_stats, kb, f"{len(ends)}번 · {since.year}년~", "코스피"))
         rows[-1]["compare"] = ("급등 첫날 샀다면", forward_stats(kospi, starts))
     elif vol_now is not None:
         rows.append(_row("kr_vkospi", "확인", "VKOSPI 공포 꺾임", "데이터 없음", "VKOSPI 기록을 쌓는 중 (KRX)", "", ""))
