@@ -337,3 +337,45 @@ def test_kr_rank_table_roundtrip(tmp_path):
     df, day = kr.rankings_from_table(st.read("kr_rank"), "종목", "foreign", "sell", 5)
     assert list(df["name"]) == ["다", "가"] and df["five"].iloc[0] == -1500 and str(day) == "2026-11-20"
     assert kr.rankings_from_table(st.read("kr_rank"), "ETF", "foreign", "sell")[0].empty
+
+
+# ---------------------------------------------------------------- 바닥 신호
+from core import bottom
+
+
+def test_forward_stats_and_effect():
+    idx = pd.bdate_range("2020-01-01", periods=400)
+    price = pd.Series(range(100, 500), index=idx, dtype=float)              # 매일 오름
+    s = bottom.forward_stats(price, [idx[10], idx[50]], {"1개월": 21})
+    assert s["1개월"]["n"] == 2 and s["1개월"]["up"] == 1.0
+    base = {"3개월": {"n": 100, "up": 0.6, "median": 0.02, "worst": -0.2}}
+    good = {"3개월": {"n": 20, "up": 0.8, "median": 0.05, "worst": -0.1}}
+    bad = {"3개월": {"n": 20, "up": 0.4, "median": -0.01, "worst": -0.3}}
+    assert bottom.effect(good, base) == "과거 효과 있음" and bottom.effect(bad, base) == "과거엔 오히려 나빴음"
+
+
+def test_vix_term_episodes():
+    idx = pd.bdate_range("2015-01-01", periods=600)
+    vix = pd.Series(15.0, index=idx); v3 = pd.Series(18.0, index=idx)
+    vix.iloc[300:310] = 25.0                                                 # 10일 역전
+    vix.iloc[-4:] = 25.0                                                     # 지금 4일째 역전
+    spx = pd.Series(range(1000, 1600), index=idx, dtype=float)
+    t = bottom.vix_term(vix, v3, spx)
+    assert len(t["episodes"]) == 1 and t["episodes"]["days"].iloc[0] == 10
+    assert t["inverted"] and t["days"] == 4 and t["at_end"]["1개월"]["up"] == 1.0
+
+
+def test_breadth_thrust_and_washout():
+    idx = pd.bdate_range("2020-01-01", periods=200)
+    adv = [250] * 200
+    for i in range(100, 108): adv[i] = 60                                   # 과매도
+    for i in range(108, 118): adv[i] = 450                                  # 한꺼번에 반등
+    br = pd.DataFrame({"date": idx, "adv": adv, "dec": [500 - a for a in adv],
+                       "above50": [0.5] * 100 + [0.1] * 10 + [0.5] * 90})
+    t = bottom.breadth_thrust(br)
+    assert len(t["signals"]) == 1 and idx[108] <= t["signals"][0] <= idx[118]
+    w = bottom.washout(br)
+    assert len(w["signals"]) == 1 and w["signals"][0] == idx[100]
+    close = pd.DataFrame({"A": range(1, 301), "B": range(300, 0, -1)}, index=pd.bdate_range("2020-01-01", periods=300), dtype=float)
+    b = bottom.breadth_from_closes(close)
+    assert (b["adv"] == 1).all() and (b["dec"] == 1).all() and b["above50"].iloc[-1] == 0.5

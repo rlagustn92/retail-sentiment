@@ -19,7 +19,7 @@ import streamlit.components.v1 as components
 # 모듈 파일이 바뀌었거나 이 서버에서 처음 실행이면 의존 순서대로 다시 읽고 캐시를 비워요.
 _MODS = ["core.config", "core.scoring", "core.news", "core.retail_flow", "core.realtime", "core.store",
          "core.cboe", "core.stocktwits", "core.alpaca", "core.finra", "core.fred", "core.finnhub",
-         "core.history", "core.kr", "core.metrics", "core.sources", "ui"]
+         "core.history", "core.kr", "core.metrics", "core.bottom", "core.sources", "ui"]
 
 
 def _fresh_modules():
@@ -40,6 +40,7 @@ import ui  # noqa: E402  (위에서 새로 읽은 모듈을 가져와요)
 from core import config, sources
 from core import history
 from core import kr
+from core import bottom
 from core import news as newsmod
 from core import retail_flow as rf
 from core.alpaca import Alpaca
@@ -68,7 +69,7 @@ def secret(name: str, default=None):
 KEY, SECRET = secret("ALPACA_KEY"), secret("ALPACA_SECRET")
 DEMO = (not KEY or not SECRET) or st.query_params.get("demo") == "1"
 GROUP = st.query_params.get("g", "all")
-MARKET = "kr" if st.query_params.get("m") == "kr" else "us"
+MARKET = {"kr": "kr", "bottom": "bottom"}.get(st.query_params.get("m"), "us")
 KR_KEY = st.query_params.get("k", "all")
 if KR_KEY != "all" and KR_KEY not in kr.SECTORS:
     KR_KEY = "all"
@@ -521,6 +522,10 @@ def render():
     items = [("all", "전체", market_summary(res)["panic"])] + [
         (k, config.GROUPS[k]["name"], res[k].panic) for k in config.INDEX_KEYS + config.SECTOR_KEYS]
     st.markdown(ui.market_switch("us") + ui.nav(GROUP, items), unsafe_allow_html=True)
+    if GROUP == "all" and not m.demo:
+        bb = safe(m.errors, "바닥 신호", c_bottom)
+        if bb:
+            st.markdown(ui.bottom_badge(bb["us"], bb["kr"]), unsafe_allow_html=True)
     if GROUP != "all":  # 선택한 탭이 화면 밖에 있으면 보이게 스크롤
         js = """<script>setTimeout(()=>{const a=window.parent.document.querySelector('.nav a.on');
 if(a){a.scrollIntoView({inline:'center',block:'nearest'});}},300);</script>"""
@@ -649,6 +654,10 @@ def render_kr():
     nav = ui.nav(KR_KEY, items).replace('href="?g=', 'href="?m=kr&k=')
     st.markdown(ui.market_switch("kr") + nav, unsafe_allow_html=True)
     if KR_KEY == "all":
+        bb = safe(err, "바닥 신호", c_bottom)
+        if bb:
+            st.markdown(ui.bottom_badge(bb["us"], bb["kr"]), unsafe_allow_html=True)
+    if KR_KEY == "all":
         if mk:
             d = mk[0].get("date")
             label = (f"장중 잠정 · {mk[0]['time'].strftime('%H:%M')}" if live and mk[0].get("time") is not None
@@ -757,7 +766,103 @@ def render_kr():
     st.markdown(ui.footer(notes), unsafe_allow_html=True)
 
 
+# ------------------------------------------------------------------ 바닥 신호
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def c_cboe(name: str):
+    return bottom.cboe_hist(name)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def c_fear_greed():
+    return bottom.fear_greed()
+
+
+def us_flow_state() -> dict | None:
+    """SPY·QQQ: 최근 거래일 개인(레버리지+본체)과 기관(대량 체결) 방향"""
+    from core.metrics import side_metrics
+    r = c_store("retail")
+    if r is None or r.empty or "inst_buy" not in r:
+        return None
+    today = pd.to_datetime(r["bucket"], utc=True).dt.tz_convert(ET).dt.date.max()
+    parts, cap = [], False
+    for etf, lev in (("SPY", "SPXL"), ("QQQ", "TQQQ")):
+        ins = side_metrics(r, etf, today, "inst")
+        rets = [x["day"] for x in (side_metrics(r, lev, today, "retail"), side_metrics(r, etf, today, "retail"))
+                if x and x["day"] is not None]
+        if not ins or ins["day"] is None or not rets:
+            continue
+        rd = sum(rets) / len(rets)
+        if rd > 0.10 and ins["day"] < -0.05:
+            cap = True
+        parts.append(f"{etf}: 개인 {'매도' if rd > 0 else '매수'} {abs(rd):.0%} · 기관 {'매도' if ins['day'] > 0 else '매수'} {abs(ins['day']):.0%}")
+    if not parts:
+        return None
+    return {"capitulation": cap, "text": f"{today.month}/{today.day} " + " / ".join(parts)}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def c_bottom():
+    """미국·한국 바닥 신호 (10분 캐시)"""
+    def get(fn, *a):
+        try:
+            return fn(*a)
+        except Exception:
+            return None
+    spx, vix, v3 = get(c_cboe, "SPX"), get(c_cboe, "VIX"), get(c_cboe, "VIX3M")
+    vn = get(c_vix_now) or {}
+    ratio = vn["vix_now"] / vn["vix3m_now"] if vn.get("vix_now") and vn.get("vix3m_now") else None
+    fg = get(c_fear_greed)
+    us_rows = bottom.with_effect(bottom.checklist_us(spx, vix, v3, ratio, c_store("us_breadth"), c_store("us_credit"),
+                                                     get(us_flow_state), fg))
+    kr_rows = bottom.with_effect(bottom.checklist_kr(c_store("kr_hist_market"), c_store("kr_index"), c_store("kr_breadth")))
+    ut, ud, uc = bottom.verdict(us_rows)
+    kt, kd, kc = bottom.verdict(kr_rows)
+    return {"us": {"rows": us_rows, "title": ut, "desc": ud, "cnt": uc},
+            "kr": {"rows": kr_rows, "title": kt, "desc": kd, "cnt": kc}, "fg": fg,
+            "dates": {"spx": spx.index.max() if spx is not None else None,
+                      "us_breadth": pd.to_datetime(c_store("us_breadth")["date"]).max() if len(c_store("us_breadth")) else None,
+                      "kr_breadth": pd.to_datetime(c_store("kr_breadth")["date"]).max() if len(c_store("kr_breadth")) else None,
+                      "kr_hist": pd.to_datetime(c_store("kr_hist_market")["date"]).max() if len(c_store("kr_hist_market")) else None}}
+
+
+@st.fragment(run_every=300)
+def render_bottom():
+    b = c_bottom()
+    now_kst = pd.Timestamp.now(tz=KST)
+    st.markdown(ui.top(now_kst.strftime("%H:%M 새로고침"), False), unsafe_allow_html=True)
+    st.markdown(ui.market_switch("bottom"), unsafe_allow_html=True)
+    with st.container(key="b_hero"):
+        st.markdown(ui.bottom_hero(b["fg"], b["us"], b["kr"]), unsafe_allow_html=True)
+    with st.container(key="b_us"):
+        st.markdown(ui.signal_rows(b["us"]["rows"], "🇺🇸 미국", "S&P500 기준 · 신호마다 '과거에 이 신호 뒤엔 어땠나'를 아무 날과 비교"),
+                    unsafe_allow_html=True)
+    with st.container(key="b_kr"):
+        st.markdown(ui.signal_rows(b["kr"]["rows"], "🇰🇷 한국", "코스피 기준 · 2020년 이후 기록으로 계산",
+                                   {"title": b["kr"]["title"], "desc": b["kr"]["desc"]}), unsafe_allow_html=True)
+    d = b["dates"]
+
+    def dd(x):
+        return "–" if x is None or pd.isna(x) else f"{pd.Timestamp(x):%m/%d}"
+    rows = [{"name": "S&P500·VIX (CBOE)", "basis": f"{dd(d['spx'])} 종가까지", "state": "정상" if d["spx"] is not None else "없음",
+             "note": "VIX 기간구조는 지금 값(15분 지연) 포함"},
+            {"name": "미국 시장 폭 (S&P500 503종목)", "basis": f"{dd(d['us_breadth'])}까지",
+             "state": "정상" if d["us_breadth"] is not None else "없음", "note": "매일 미국 장 마감 뒤 이어 붙여요"},
+            {"name": "한국 수급·시장 폭 (2020~)", "basis": f"수급 {dd(d['kr_hist'])} · 시장 폭 {dd(d['kr_breadth'])}까지",
+             "state": "정상" if d["kr_hist"] is not None else "없음", "note": "매일 한국 장 마감 뒤(16:17) 이어 붙여요"},
+            {"name": "CNN 공포탐욕", "basis": "열 때 받아요 (30분 캐시)", "state": "정상" if b["fg"] else "없음", "note": ""}]
+    with st.container(key="b_status"):
+        st.markdown(ui.data_status(rows), unsafe_allow_html=True)
+    st.markdown(ui.footer([
+        "월가 체크리스트를 우리가 무료로 구할 수 있는 데이터로 옮긴 거예요. BofA 펀드매니저 현금 비중, 골드만 패닉 지수, CTA 포지션처럼 "
+        "기관 내부 자료는 빠져 있어요.",
+        "과거 통계는 표본이 적고 미래를 보장하지 않아요. 매수·매도 신호가 아니라 지금이 과거의 어떤 상황과 닮았는지 보는 참고예요.",
+        "시장 폭은 지금 S&P500·시총 상위 300 종목으로 과거를 계산해서 그 사이 빠진 종목은 안 들어가 있어요(생존 편향).",
+    ]), unsafe_allow_html=True)
+
+
 if MARKET == "kr":
     render_kr()
+elif MARKET == "bottom":
+    render_bottom()
 else:
     render()

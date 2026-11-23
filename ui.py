@@ -173,9 +173,10 @@ def _side(x) -> tuple[str, str]:
 
 
 def market_switch(cur: str) -> str:
-    """미국 / 한국 전환"""
+    """미국 / 한국 / 바닥 신호 전환"""
     return flat(f'''<div class="mkt"><a href="?" target="_self" class="{"on" if cur == "us" else ""}">🇺🇸 미국</a>
-<a href="?m=kr" target="_self" class="{"on" if cur == "kr" else ""}">🇰🇷 한국</a></div>''')
+<a href="?m=kr" target="_self" class="{"on" if cur == "kr" else ""}">🇰🇷 한국</a>
+<a href="?m=bottom" target="_self" class="{"on" if cur == "bottom" else ""}">🧭 바닥 신호</a></div>''')
 
 
 def _won(x) -> tuple[str, str]:
@@ -539,3 +540,83 @@ def members(df, br: dict, name_fn) -> str:
 <div class="rv"><div class="x">거래량 {rvs}</div><div class="bar"><i style="width:{w}%;background:{col}"></i></div></div></div>""")
     return flat(f"""<div class="sect">종목별 현황</div>
 <div class="sectsub">많이 빠진 순 · 거래량은 평소 같은 시각 대비 (실시간 추정)</div>{sm}{''.join(rows)}""")
+
+
+# ---------------------------------------------------------------- 바닥 신호 탭
+STATE_STYLE = {"켜짐": ("#30a46c", "켜짐"), "진행 중": ("#f5a524", "진행 중"), "아직": ("var(--faint)", "아직"),
+               "데이터 없음": ("var(--faint)", "기록 쌓는 중"), "참고": ("var(--sub)", "참고")}
+EFFECT_COLOR = {"과거 효과 있음": "#30a46c", "과거 효과 약함": "var(--sub)", "과거엔 오히려 나빴음": "#e5484d",
+                "표본 적음": "var(--faint)"}
+
+
+def _pct(x, sign=True):
+    if x is None or x != x:
+        return "–"
+    return f"{x * 100:+.1f}%" if sign else f"{x * 100:.0f}%"
+
+
+def bottom_badge(us: dict, kr: dict) -> str:
+    """시장 탭 위쪽: 바닥 신호 요약 → 누르면 바닥 신호 탭"""
+    def part(name, v):
+        c = v["cnt"]
+        return f'{name} 항복 <b>{c["항복"][0]}/{c["항복"][1]}</b> · 확인 <b>{c["확인"][0]}/{c["확인"][1]}</b>'
+    return flat(f"""<a class="vrow" href="?m=bottom" target="_self" style="text-decoration:none;color:inherit;border-top:none;padding:4px 0">
+<div><div class="a">🧭 바닥 신호 · {esc(us['title'])}</div><div class="b">{part('미국', us)} &nbsp;|&nbsp; {part('한국', kr)}</div></div>
+<div class="sc" style="font-size:15px;color:var(--sub)">자세히 ›</div></a>""")
+
+
+def bottom_hero(fg: dict | None, us: dict, kr: dict) -> str:
+    fgs = "–" if not fg or fg.get("score") is None else f"{fg['score']:.0f}"
+    from core.bottom import RATING_KO
+    fgr = "" if not fg else RATING_KO.get(fg.get("rating"), fg.get("rating") or "")
+
+    def col(v):
+        return "#30a46c" if v["cnt"]["확인"][0] else "#f5a524" if v["cnt"]["항복"][0] else "var(--sub)"
+    return flat(f"""<div class="label">바닥 신호 · 월가는 바닥을 맞히지 않고 '반등 확인'을 기다려요</div>
+<div class="pair" style="margin-top:12px">
+<div class="mini"><div class="k">개미 계기판 · CNN 공포탐욕</div><div class="v">{esc(fgs)}</div>
+<div class="s" style="color:var(--sub)">{esc(fgr)} · 지난 한 달 백미러</div></div>
+<div class="mini"><div class="k">월가식 체크리스트 · 미국</div><div class="v" style="color:{col(us)}">{us['cnt']['항복'][0] + us['cnt']['확인'][0]}개 켜짐</div>
+<div class="s" style="color:var(--sub)">항복 {us['cnt']['항복'][0]}/{us['cnt']['항복'][1]} · 확인 {us['cnt']['확인'][0]}/{us['cnt']['확인'][1]}</div></div>
+</div>
+<div class="head" style="font-size:21px">{esc(us['title'])}</div><div class="desc">{esc(us['desc'])}</div>""")
+
+
+def signal_rows(rows: list[dict], title: str, sub: str, verdict: dict | None = None) -> str:
+    groups = [("항복", "① 항복이 나왔나 (바닥권)"), ("확인", "② 반등이 확인됐나"), ("참고", "참고 (개수에 안 넣어요)")]
+    out = [f'<div class="sect">{esc(title)}</div><div class="sectsub">{esc(sub)}</div>']
+    if verdict:
+        out.append(f'<div class="verdict"><div class="vt">{esc(verdict["title"])}</div><div class="vd">{esc(verdict["desc"])}</div></div>')
+    for g, gname in groups:
+        rs = [r for r in rows if r["group"] == g]
+        if not rs:
+            continue
+        out.append(f'<div class="label" style="margin:12px 0 2px">{esc(gname)}</div>')
+        for r in rs:
+            c, label = STATE_STYLE.get(r["state"], ("var(--sub)", r["state"]))
+            eff = r.get("effect") or ""
+            effh = f'<span style="color:{EFFECT_COLOR.get(eff, "var(--sub)")};font-weight:700"> · {esc(eff)}</span>' if eff else ""
+            stats = ""
+            if r.get("stats") and r.get("base"):
+                trs = []
+                for h in ("1개월", "3개월", "6개월", "1년"):
+                    s, b = r["stats"].get(h), r["base"].get(h)
+                    if not s or not s["n"]:
+                        continue
+                    trs.append(f"<tr><th>{h} 뒤</th><td>{_pct(s['up'], False)} · {_pct(s['median'])}</td>"
+                               f"<td style='color:var(--faint)'>{_pct(s['worst'])}</td>"
+                               f"<td style='color:var(--sub)'>{_pct(b['up'], False)} · {_pct(b['median'])}</td></tr>")
+                cmp_ = ""
+                if r.get("compare"):
+                    lbl, cs = r["compare"]
+                    x = cs.get("1개월") or {}
+                    cmp_ = (f"<div class='meta'>비교: {esc(lbl)} 1개월 뒤 오른 확률 {_pct(x.get('up'), False)} · "
+                            f"중간 {_pct(x.get('median'))} · 최악 {_pct(x.get('worst'))}</div>")
+                stats = (f"<table class='ftab' style='margin-top:8px'><thead><tr><th></th><th>이 신호 뒤 (오른 확률·중간)</th>"
+                         f"<th>최악</th><th>아무 날</th></tr></thead><tbody>{''.join(trs)}</tbody></table>"
+                         f"<div class='meta'>{esc(r['market'])} 기준 · 표본 {esc(r['sample'])} · 신호 다음 날 종가에 샀다고 계산</div>{cmp_}")
+            out.append(f"""<details class="row"><summary>
+<div class="rl"><div class="t">{esc(r['title'])}</div><div class="c">{esc(r['now'])}{effh}</div></div>
+<div class="rr"><div class="v" style="color:{c};font-size:15px">{esc(label)}</div></div></summary>
+<div class="body"><b>이게 뭐예요</b> {esc(r['what'])}<br><b>읽는 법</b> {esc(r['how'])}{stats}</div></details>""")
+    return flat("".join(out))
