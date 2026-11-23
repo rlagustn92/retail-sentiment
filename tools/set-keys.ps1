@@ -1,4 +1,4 @@
-﻿# Finnhub·FRED 키를 GitHub 저장소 Secrets(FINNHUB_KEY, FRED_KEY)에 넣어요.
+﻿# Finnhub·FRED·KRX 키를 GitHub 저장소 Secrets(FINNHUB_KEY, FRED_KEY, KRX_KEY)에 넣어요.
 # 붙여넣기 대신 클립보드에서 바로 읽어요 (검은 창에서 Ctrl+V는 키가 아니라 글자 하나로 들어가요).
 # 키 값은 앞뒤 2글자만 보여주고, 저장한 뒤 클립보드를 비워요. 실행: 저장소 폴더의 "키등록.cmd" 더블클릭
 $repo = 'rlagustn92/retail-sentiment'
@@ -10,7 +10,8 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 
 $items = @(
     @{ Name = 'FINNHUB_KEY'; Label = 'Finnhub API key'; Where = 'finnhub.io 로그인 > Dashboard 의 "API key" 칸' },
-    @{ Name = 'FRED_KEY';    Label = 'FRED API 키';     Where = 'fredaccount.stlouisfed.org/apikeys 에서 이 대시보드용으로 새로 받은 키 (32자)' }
+    @{ Name = 'FRED_KEY';    Label = 'FRED API 키';     Where = 'fredaccount.stlouisfed.org/apikeys 에서 이 대시보드용으로 새로 받은 키 (32자)' },
+    @{ Name = 'KRX_KEY';     Label = 'KRX Open API 인증키'; Where = 'openapi.krx.co.kr 로그인 > 마이페이지 > API 인증키 (승인된 뒤에 보여요)' }
 )
 
 foreach ($it in $items) {
