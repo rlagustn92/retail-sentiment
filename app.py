@@ -163,6 +163,72 @@ def c_demo():
     return sources.demo_market()
 
 
+def _ts(x):
+    if x is None:
+        return None
+    t = pd.Timestamp(x)
+    if pd.isna(t):
+        return None
+    return t.tz_localize("UTC") if t.tzinfo is None else t
+
+
+def ago(t) -> str:
+    """몇 분 전 · 몇 시간 전 · 날짜"""
+    t = _ts(t)
+    if t is None:
+        return "–"
+    m = (pd.Timestamp.now(tz="UTC") - t).total_seconds() / 60
+    k = t.tz_convert(KST)
+    if m < 1:
+        return f"{k:%H:%M} (방금)"
+    if m < 60:
+        return f"{k:%H:%M} ({m:.0f}분 전)"
+    if m < 24 * 60:
+        return f"{k:%H:%M} ({m / 60:.0f}시간 전)"
+    return f"{k:%m/%d %H:%M}"
+
+
+def state(t, limit_min: float, open_now: bool) -> str:
+    """장 중이면 limit_min 안에 새 기록이 있어야 '정상', 장이 닫혀 있으면 '장 마감'"""
+    t = _ts(t)
+    if t is None:
+        return "없음"
+    age = (pd.Timestamp.now(tz="UTC") - t).total_seconds() / 60
+    if not open_now:
+        return "장 마감" if age < 4 * 24 * 60 else "멈춤"
+    return "정상" if age <= limit_min else "지연" if age <= limit_min * 3 else "멈춤"
+
+
+def last_run(prefix: tuple) -> dict:
+    runs = c_store("runs")
+    if runs is None or runs.empty or "mode" not in runs:
+        return {}
+    r = runs[runs["mode"].astype(str).str.startswith(prefix)].sort_values("ts")
+    return {} if r.empty else r.iloc[-1].to_dict()
+
+
+def us_status(m: MarketData) -> list[dict]:
+    open_ = m.market_open
+    rows = []
+    rt_live = m.rt is not None and not m.rt.empty and "live" in m.rt and bool(m.rt["live"].fillna(False).any())
+    rows.append({"name": "시세·거래량 (알파카)", "basis": "실시간 (IEX)" if rt_live else "장 마감 종가",
+                 "state": "정상", "note": "열 때마다 새로 받아요"})
+    rb = m.retail["bucket"].max() if m.retail is not None and not m.retail.empty and "bucket" in m.retail else None
+    rows.append({"name": "개인·기관 체결 수급", "basis": f"마지막 구간 {ago(rb)}",
+                 "state": state(rb, 50, open_), "note": "15분 지연 + 수집기 15분마다"})
+    nw = m.news["ts"].max() if m.news is not None and not m.news.empty else None
+    rows.append({"name": "뉴스 (알파카·Finnhub)", "basis": ago(nw), "state": state(nw, 120, open_), "note": ""})
+    fr = m.finra["date"].max() if m.finra is not None and not m.finra.empty else None
+    rows.append({"name": "FINRA 장외 공매도", "basis": f"{_ts(fr):%m/%d} 거래일" if fr is not None else "–",
+                 "state": state(fr, 4 * 24 * 60, False) if fr is not None else "없음", "note": "하루 1번 (전일)"})
+    r = last_run(("intraday", "daily", "backfill", "breadth"))
+    if r:
+        rows.append({"name": "미국 수집기 마지막 실행", "basis": f"{ago(r['ts'])} · {r['mode']}",
+                     "state": ("정상" if str(r.get("ok")) in ("True", "true", "1") else "멈춤"),
+                     "note": str(r.get("note") or "")[:60]})
+    return rows
+
+
 def prefetch(jobs: list):
     """서로 상관없는 데이터를 동시에 받아 캐시에 넣어 둬요. 이어지는 순서대로의 호출은 캐시에서 바로 나와요.
     jobs = [(함수, 인자...)] 또는 [(여러 함수를 순서대로 부르는 함수,)]"""
@@ -450,7 +516,7 @@ def render():
     m = c_demo() if DEMO else live_market(GROUP)
     res = build_all(m)
     now_kst = pd.Timestamp(m.now).tz_convert(KST)
-    st.markdown(ui.top(("데모 · " if m.demo else "") + now_kst.strftime("%H:%M 업데이트"), m.market_open),
+    st.markdown(ui.top(("데모 · " if m.demo else "") + now_kst.strftime("%H:%M 새로고침"), m.market_open),
                 unsafe_allow_html=True)
     items = [("all", "전체", market_summary(res)["panic"])] + [
         (k, config.GROUPS[k]["name"], res[k].panic) for k in config.INDEX_KEYS + config.SECTOR_KEYS]
@@ -470,6 +536,9 @@ if(a){a.scrollIntoView({inline:'center',block:'nearest'});}},300);</script>"""
     else:
         page_group(m, res[GROUP])
 
+    if not m.demo:
+        with st.container(key="card_status"):
+            st.markdown(ui.data_status(us_status(m)), unsafe_allow_html=True)
     notes = ["투매 지수는 상황 판단을 돕는 참고 지표예요. 매수·매도 신호가 아니에요.",
              f"{config.REFRESH_SEC}초마다 자동으로 새로고침돼요."]
     if m.errors:
@@ -575,7 +644,7 @@ def render_kr():
     secs = ([s for s in (kr.sector_summary(k, trends, hist_sec) for k in kr.SECTORS) if s]
             if trends is not None and len(trends) else [])
     now_kst = pd.Timestamp.now(tz=KST)
-    st.markdown(ui.top(now_kst.strftime("%H:%M 업데이트"), live), unsafe_allow_html=True)
+    st.markdown(ui.top(now_kst.strftime("%H:%M 새로고침"), live), unsafe_allow_html=True)
     items = [("all", "전체", None)] + [(s["key"], s["name"], s["big_score"]) for s in secs]
     nav = ui.nav(KR_KEY, items).replace('href="?g=', 'href="?m=kr&k=')
     st.markdown(ui.market_switch("kr") + nav, unsafe_allow_html=True)
@@ -599,7 +668,9 @@ def render_kr():
             secs_sorted = sorted(secs, key=lambda s: -(s["big_score"] if s["big_score"] is not None else -1))
             d = secs[0]["date"]
             with st.container(key="kr_sectors"):
-                st.markdown(ui.section("섹터별 수급 지도", f"큰손 매도 강도 높은 순 · {d.month}월 {d.day}일 · 눌러서 종목별 보기")
+                sb = ("오늘 장 마감 확정" if d == now_kst.date() and not live else
+                      "오늘 장중 잠정" if d == now_kst.date() else "전 거래일 확정 · 오늘 종목별 수급은 장 마감 뒤 반영")
+                st.markdown(ui.section("섹터별 수급 지도", f"기준 {d.month}월 {d.day}일 · {sb} · 큰손 매도 강도 높은 순")
                             + ui.kr_tiles(secs_sorted), unsafe_allow_html=True)
         with st.container(key="kr_rank"):
             kind = st.segmented_control("대상", ["종목", "ETF"], default="종목", key="kr_kind",
@@ -622,6 +693,12 @@ def render_kr():
                 names = (safe(err, "종목 목록", c_kr_universe, kr_slot(6 * 3600), default=pd.DataFrame()) if kind == "종목"
                          else safe(err, "ETF 목록", c_kr_etfs, kr_slot(6 * 3600), default=pd.DataFrame()))
             else:
+                col = df.attrs.get("collected")
+                closed_today = day == pd.Timestamp.now(tz=KST).date() and not live
+                basis = ("오늘 장 마감 확정" if closed_today else "오늘 장중 잠정" if day == pd.Timestamp.now(tz=KST).date()
+                         else "전 거래일 확정")
+                st.markdown(f'<div class="sectsub">기준: {day.month}월 {day.day}일 · {basis}'
+                            + (f" · {ago(col)} 수집" if col is not None else "") + "</div>", unsafe_allow_html=True)
                 st.markdown(ui.kr_rank(df, who, side_lbl, day), unsafe_allow_html=True)
             if names is not None and len(names):
                 rt = safe(err, "종목 수급", c_kr_rank_trends, kr_slot(600 if live else 3600),
@@ -646,6 +723,32 @@ def render_kr():
                     st.altair_chart(ch, width="stretch")
             with st.container(key="kr_members"):
                 st.markdown(ui.kr_members(s["members"]), unsafe_allow_html=True)
+    rows = []
+    if mk:
+        rows.append({"name": "지수 수급 (네이버)", "basis": ("장중 잠정 " if live else "장 마감 ") + ago(mk[0].get("time")),
+                     "state": "정상" if mk[0].get("time") is not None else "없음", "note": "열 때마다 새로 받아요 (90초 캐시)"})
+    ki = safe(err, "기록", c_store, "kr_intraday", default=pd.DataFrame())
+    kt = ki["ts"].max() if ki is not None and len(ki) else None
+    rows.append({"name": "장중 기록 (10분마다)", "basis": ago(kt), "state": state(kt, 25, live), "note": "코스피 장중 그래프"})
+    rk = safe(err, "순위표", c_store, "kr_rank", default=pd.DataFrame())
+    rc = rk["collected"].iloc[0] if rk is not None and len(rk) and "collected" in rk else None
+    rows.append({"name": "누가 뭘 팔고 샀나 (순위표)",
+                 "basis": (f"{pd.to_datetime(rk['date']).max():%m/%d} 기준 · {ago(rc)} 수집" if rc is not None else "–"),
+                 "state": state(rc, 75, live), "note": "장중 1시간마다 · 장 마감 뒤 16:17"})
+    if secs:
+        rows.append({"name": "섹터 수급 (종목별 일별)", "basis": f"{secs[0]['date']:%m/%d} 거래일", "state": "정상",
+                     "note": "열 때 받아요 (5~30분 캐시)"})
+    hmk = safe(err, "과거 기록", c_store, "kr_hist_market", default=pd.DataFrame())
+    if hmk is not None and len(hmk):
+        rows.append({"name": "과거 수급 기록 (2020~)", "basis": f"{pd.to_datetime(hmk['date']).max():%m/%d}까지",
+                     "state": "정상", "note": "매일 장 마감 뒤 이어 붙여요"})
+    r = last_run(("kr",))
+    if r:
+        rows.append({"name": "한국 수집기 마지막 실행", "basis": f"{ago(r['ts'])} · {r['mode']}",
+                     "state": "정상" if str(r.get("ok")) in ("True", "true", "1") else "멈춤",
+                     "note": str(r.get("note") or "")[:60]})
+    with st.container(key="kr_status"):
+        st.markdown(ui.data_status(rows), unsafe_allow_html=True)
     notes = ["네이버 증권 공개 데이터예요. 지수 수급은 장중 잠정치, 섹터 수급은 대표 종목들의 일별 투자자 순매수를 더한 값이에요.",
              "섹터 수급은 장중엔 전 거래일 기준일 수 있어요(종목별 투자자 데이터가 장 마감 뒤 확정돼요).",
              "수급 판정은 상황 판단을 돕는 참고예요. 매수·매도 신호가 아니에요."]

@@ -171,8 +171,8 @@ def index_history(market: str, since) -> pd.DataFrame:
     return df[df["date"] >= since].drop_duplicates(["date", "market"]) if len(df) else df
 
 
-def build_history(since, workers: int = 4) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """(시장 합계, 섹터별, 지수) 일별 기록. 시장 합계 = 지금 시총 상위 300 종목의 합(코스피 200·코스닥 100)"""
+def build_history(since, workers: int = 4) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """(시장 합계, 섹터별, 지수, 시장 폭) 일별 기록. 시장 합계 = 지금 시총 상위 300 종목의 합(코스피 200·코스닥 100)"""
     idx = []
     for m in MARKETS:  # 지수는 먼저(가벼움)
         try:
@@ -191,7 +191,7 @@ def build_history(since, workers: int = 4) -> tuple[pd.DataFrame, pd.DataFrame, 
     with ThreadPoolExecutor(workers) as ex:
         parts = [x for x in ex.map(one, codes) if x is not None and len(x)]
     if not parts:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     t = pd.concat(parts, ignore_index=True)
     cols = ["foreign", "inst", "personal"]
     tu = t.merge(u[["code", "market"]], on="code")
@@ -212,10 +212,14 @@ def build_history(since, workers: int = 4) -> tuple[pd.DataFrame, pd.DataFrame, 
         secs.append(g.reset_index())
     sector = pd.concat(secs, ignore_index=True) if secs else pd.DataFrame()
     index = pd.concat(idx, ignore_index=True) if idx else pd.DataFrame()
-    for df in (market, sector, index):
+    from .bottom import breadth_from_closes
+    close = tu.pivot_table(index="date", columns="code", values="close", aggfunc="last")
+    close.index = pd.to_datetime(close.index)
+    breadth = breadth_from_closes(close)
+    for df in (market, sector, index, breadth):
         if len(df):
             df["date"] = pd.to_datetime(df["date"]).dt.tz_localize("UTC")
-    return market, sector, index
+    return market, sector, index, breadth
 
 
 # 한국 과거 폭락: 그 기간 큰손 순매도가 가장 셌던 날과 비교
@@ -479,6 +483,7 @@ def rankings_from_table(tbl: pd.DataFrame, kind: str, who: str, side: str, n: in
     day = pd.to_datetime(t["date"]).dt.date.max()
     t = t[(t[who] < 0) if side == "sell" else (t[who] > 0)].sort_values(who, ascending=(side == "sell")).head(n)
     t["five"] = t[f"five_{who}"]
+    t.attrs["collected"] = pd.Timestamp(tbl["collected"].iloc[0]) if "collected" in tbl and len(tbl) else None
     return t.reset_index(drop=True), day
 
 

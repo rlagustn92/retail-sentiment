@@ -12,10 +12,13 @@ on:
         description: "intraday / daily / backfill"
         default: backfill
         type: choice
-        options: [backfill, intraday, daily]
+        options: [backfill, intraday, daily, breadth]
       days:
         description: "backfill 할 거래일 수"
         default: "10"
+      since:
+        description: "breadth: 이 날짜부터 미국 시장 폭을 채워요 (YYYY-MM-DD)"
+        default: "2016-01-01"
 
 permissions:
   contents: write
@@ -63,7 +66,7 @@ jobs:
           else
             MODE=intraday
           fi
-          python collector.py "$MODE" --days "${{ github.event.inputs.days || '10' }}" --data data
+          python collector.py "$MODE" --days "${{ github.event.inputs.days || '10' }}" --since "${{ github.event.inputs.since || '2016-01-01' }}" --data data
 
       - name: data 브랜치에 저장
         if: always()   # 수집이 중간에 실패·시간 초과돼도 그때까지 계산한 건 저장

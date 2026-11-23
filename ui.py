@@ -432,6 +432,23 @@ def section(title: str, sub: str = "") -> str:
     return flat(f'<div class="sect">{esc(title)}</div>' + (f'<div class="sectsub">{esc(sub)}</div>' if sub else ""))
 
 
+def data_status(rows: list[dict]) -> str:
+    """rows: name, basis(기준), age(몇 분 전), state('정상'|'지연'|'멈춤'|'장 마감'|'없음'), note"""
+    color = {"정상": "#30a46c", "장 마감": "var(--sub)", "지연": "#f5a524", "멈춤": "#e5484d", "없음": "var(--faint)"}
+    bad = [r for r in rows if r["state"] in ("지연", "멈춤")]
+    head = "모두 정상" if not bad else f"{len(bad)}개 확인 필요"
+    hc = "#30a46c" if not bad else "#f5a524"
+    trs = "".join(
+        f'<tr><th>{esc(r["name"])}<div style="font-size:11px;color:var(--faint);font-weight:500">{esc(r.get("note", ""))}</div></th>'
+        f'<td style="text-align:left;font-weight:600">{esc(r["basis"])}</td>'
+        f'<td style="color:{color.get(r["state"], "var(--sub)")}">{esc(r["state"])}</td></tr>' for r in rows)
+    return flat(f"""<details class="row"{' open' if bad else ''}><summary>
+<div class="rl"><div class="t">데이터 상태</div><div class="c">언제 기준 숫자인지 · 수집기가 제때 돌았는지</div></div>
+<div class="rr"><div class="v" style="color:{hc};font-size:15px">{esc(head)}</div></div></summary>
+<div class="body"><table class="ftab"><thead><tr><th>항목</th><th style="text-align:left">기준</th><th>상태</th></tr></thead>
+<tbody>{trs}</tbody></table></div></details>""")
+
+
 def footer(lines: list[str]) -> str:
     return flat('<div class="foot">' + "<br>".join(esc(x) for x in lines) + "</div>")
 

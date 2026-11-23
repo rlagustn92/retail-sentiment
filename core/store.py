@@ -22,14 +22,20 @@ FILES = {
     "kr_hist_sector": "kr_hist_sector.csv",  # date, sector, foreign, inst, personal, chg
     "kr_index": "kr_index.csv",              # date, market, close, chg
     "kr_rank": "kr_rank.csv",                # kind, code, name, market, date, 투자자별 그날·5일 순매수 (덮어씀)
+    "us_breadth": "us_breadth.csv",          # date, adv, dec, unch, n, above50, above200, nh, nl (S&P500 구성종목)
+    "us_credit": "us_credit.csv",            # date, hyg, ief, lqd, spy (일별 종가)
+    "kr_breadth": "kr_breadth.csv",          # date, adv, dec, ... (시총 상위 300)
+    "runs": "runs.csv",                      # ts, mode, ok, secs, note — 수집기가 돌 때마다 한 줄
 }
 KEYS = {"retail": ["bucket", "sym"], "putcall": ["date"], "stocktwits": ["ts", "sym"],
         "score": ["ts", "group"], "news": ["id"], "finra": ["date", "sym"], "fred": ["date", "series"],
         "kr_intraday": ["ts", "market"], "kr_market": ["date", "market"], "kr_hist_market": ["date", "market"],
-        "kr_hist_sector": ["date", "sector"], "kr_index": ["date", "market"], "kr_rank": ["kind", "code"]}
+        "kr_hist_sector": ["date", "sector"], "kr_index": ["date", "market"], "kr_rank": ["kind", "code"],
+        "us_breadth": ["date"], "us_credit": ["date"], "kr_breadth": ["date"], "runs": ["ts", "mode"]}
 DATE_COLS = {"retail": ["bucket"], "stocktwits": ["ts"], "score": ["ts"], "putcall": ["date"],
              "news": ["ts"], "finra": ["date"], "fred": ["date"], "kr_intraday": ["ts"], "kr_market": ["date"],
-             "kr_hist_market": ["date"], "kr_hist_sector": ["date"], "kr_index": ["date"]}
+             "kr_hist_market": ["date"], "kr_hist_sector": ["date"], "kr_index": ["date"],
+             "us_breadth": ["date"], "us_credit": ["date"], "kr_breadth": ["date"], "runs": ["ts"]}
 
 
 def _parse(name: str, text: str) -> pd.DataFrame:

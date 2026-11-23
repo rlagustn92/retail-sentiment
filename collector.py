@@ -16,7 +16,9 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
-from core import cboe, config, finra, fred, kr, sources
+import requests
+
+from core import bottom, cboe, config, finra, fred, kr, sources
 from core import news as newsmod
 from core import retail_flow as rf
 from core.finnhub import Finnhub
@@ -25,9 +27,9 @@ from core.alpaca import Alpaca
 from core.metrics import ET, MarketData, build_all
 from core.store import LocalStore
 
-KEEP_DAYS = {"retail": 100, "stocktwits": 60, "score": 45, "putcall": 400, "news": 4, "finra": 400, "fred": 800,
+KEEP_DAYS = {"runs": 30, "retail": 100, "stocktwits": 60, "score": 45, "putcall": 400, "news": 4, "finra": 400, "fred": 800,
              "kr_intraday": 15, "kr_market": 800}
-DATE_COL = {"retail": "bucket", "stocktwits": "ts", "score": "ts", "putcall": "date", "news": "ts",
+DATE_COL = {"runs": "ts", "retail": "bucket", "stocktwits": "ts", "score": "ts", "putcall": "date", "news": "ts",
             "finra": "date", "fred": "date", "kr_intraday": "ts", "kr_market": "date"}
 
 
@@ -171,7 +173,48 @@ def update_kr(st: LocalStore, now: datetime, daily: bool):
         st.append("kr_intraday", df.drop(columns=["date", "status"]))
         log("한국 장중", df[["market", "foreign", "inst", "personal"]].to_dict("records"))
     else:
-        log("한국 장 닫힘 — 건너뜀", df["status"].tolist())
+        raise Skip("한국 장 닫힘")
+
+
+def sp500_symbols() -> list[str]:
+    """S&P500 구성종목 (위키백과 목록)"""
+    import io
+    r = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+                     headers={"User-Agent": "Mozilla/5.0 (retail-sentiment dashboard)"}, timeout=30)
+    r.raise_for_status()
+    t = pd.read_html(io.StringIO(r.text))[0]
+    return sorted({str(s).strip().replace("-", ".") for s in t["Symbol"] if str(s).strip()})
+
+
+def update_us_breadth(a: Alpaca, st: LocalStore, since=None):
+    """미국 시장 폭(S&P500 구성종목 일봉) + 신용(HYG·IEF·LQD) 일별 기록. since가 없으면 최근 것만 이어 붙여요"""
+    now = datetime.now(timezone.utc)
+    old = st.read("us_breadth")
+    if since is None:
+        if old.empty:
+            since = pd.Timestamp("2016-01-01").date()
+            keep_from = since
+        else:
+            keep_from = (pd.to_datetime(old["date"]).max() - pd.Timedelta(days=10)).date()
+            since = keep_from - timedelta(days=420)  # 200일선·52주 계산용
+    else:
+        keep_from = since
+    start = datetime.combine(since, datetime.min.time(), tzinfo=timezone.utc)
+    t0 = datetime.now(timezone.utc)
+    syms = sp500_symbols()
+    raw = a.bars(syms + ["HYG", "IEF", "LQD", "SPY"], "1Day", start, Alpaca.sip_end(now))
+    bars = sources.bars_frame(raw)
+    bars["date"] = pd.to_datetime(bars["ts"], utc=True).dt.tz_convert(ET).dt.normalize().dt.tz_localize(None)
+    close = bars.pivot_table(index="date", columns="sym", values="c", aggfunc="last")
+    br = bottom.breadth_from_closes(close[[s for s in syms if s in close]])
+    cr = close[[c for c in ("HYG", "IEF", "LQD", "SPY") if c in close]].rename(columns=str.lower).reset_index()
+    for df in (br, cr):
+        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize("UTC")
+    cut = pd.Timestamp(keep_from, tz="UTC")
+    st.append("us_breadth", br[br["date"] >= cut])
+    st.append("us_credit", cr[cr["date"] >= cut])
+    log(f"미국 시장 폭 {len(syms)}종목 {keep_from}~: {len(br[br['date'] >= cut])}일 "
+        f"(최근 50일선 위 {br['above50'].iloc[-1]:.0%}) · {(datetime.now(timezone.utc) - t0).seconds}초")
 
 
 def update_kr_rank(st: LocalStore):
@@ -180,6 +223,7 @@ def update_kr_rank(st: LocalStore):
     u, e = kr.universe(), kr.etf_universe()
     trends = kr.all_trends(days=6, workers=8, codes=list(u["code"]) + list(e["code"]))
     tbl = pd.concat([kr.rank_table(u, trends, "종목"), kr.rank_table(e, trends, "ETF")], ignore_index=True)
+    tbl["collected"] = pd.Timestamp(t0).isoformat()
     if len(tbl):
         st.write("kr_rank", tbl)
     log(f"한국 순위표 {len(tbl)}종목 ({(datetime.now(timezone.utc) - t0).seconds}초)")
@@ -196,10 +240,13 @@ def update_kr_hist(st: LocalStore, since):
         else:
             log(f"한국 과거 수급이 덜 채워져 있어서({int(last['n'].iloc[0]) if len(last) else 0}종목) 처음부터 다시 받아요")
     t0 = datetime.now(timezone.utc)
-    mk, sec, idx = kr.build_history(start)
-    for name, df in (("kr_hist_market", mk), ("kr_hist_sector", sec), ("kr_index", idx)):
-        st.append(name, df)
-    log(f"한국 과거 수급 {start}~: 시장 {len(mk)}행 · 섹터 {len(sec)}행 · 지수 {len(idx)}행 "
+    fetch_from = start if start == since else max(since, start - timedelta(days=400))  # 200일선·52주 계산용으로 넉넉히
+    mk, sec, idx, br = kr.build_history(fetch_from)
+    cut = pd.Timestamp(start, tz="UTC")
+    for name, df in (("kr_hist_market", mk), ("kr_hist_sector", sec), ("kr_index", idx), ("kr_breadth", br)):
+        if len(df):
+            st.append(name, df if name != "kr_breadth" or start == since else df[df["date"] >= cut])
+    log(f"한국 과거 수급 {start}~: 시장 {len(mk)}행 · 섹터 {len(sec)}행 · 지수 {len(idx)}행 · 시장 폭 {len(br)}행 "
         f"({(datetime.now(timezone.utc) - t0).seconds}초)")
 
 
@@ -252,9 +299,39 @@ def record_scores(a: Alpaca, st: LocalStore, now: datetime, st_now: dict):
     log("점수", {k: (None if r.panic is None else round(r.panic)) for k, r in res.items()}, "실패", list(err))
 
 
+class Skip(Exception):
+    """할 일이 없어서 정상적으로 건너뜀 (예: 장 닫힘)"""
+
+
 def main():
+    """실행할 때마다 runs.csv에 (시각, 모드, 성공 여부, 걸린 시간)을 남겨요 → 앱 '데이터 상태'에서 확인"""
+    t0 = datetime.now(timezone.utc)
+    mode = sys.argv[1] if len(sys.argv) > 1 else "?"
+    data = sys.argv[sys.argv.index("--data") + 1] if "--data" in sys.argv else "data"
+    ok, note = True, ""
+    try:
+        run()
+    except Skip as e:
+        note = f"건너뜀: {e}"
+        log(note)
+    except SystemExit as e:
+        ok, note = (e.code in (0, None)), str(e.code or "")
+        raise
+    except Exception as e:
+        ok, note = False, f"{type(e).__name__}: {str(e)[:150]}"
+        raise
+    finally:
+        try:
+            LocalStore(data).append("runs", pd.DataFrame([{
+                "ts": pd.Timestamp(t0), "mode": mode, "ok": ok,
+                "secs": int((datetime.now(timezone.utc) - t0).total_seconds()), "note": note}]))
+        except Exception:
+            pass
+
+
+def run():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["intraday", "daily", "backfill", "kr", "kr_daily", "kr_hist"])
+    ap.add_argument("mode", choices=["intraday", "daily", "backfill", "breadth", "kr", "kr_daily", "kr_hist"])
     ap.add_argument("--days", type=int, default=10)
     ap.add_argument("--data", default="data")
     ap.add_argument("--since", default="2020-01-01", help="kr_hist: 이 날짜부터 한국 과거 수급을 채워요")
@@ -282,8 +359,7 @@ def main():
 
     if args.mode == "intraday":
         if not a.clock().get("is_open"):
-            log("장 닫힘 — 건너뜀")
-            return
+            raise Skip("미국 장 닫힘")
         o, c = session_bounds(sessions(a, 1)[-1])
         log(f"개인 수급 {fill_retail(a, st, o, c, now)}개 구간 추가")
         st_now = {}
@@ -308,7 +384,11 @@ def main():
         log(f"풋/콜 {pc.to_dict('records')}")
         attempt("FINRA", update_finra, a, st, now)
         attempt("FRED", update_fred, st, now)
+        attempt("미국 시장 폭", update_us_breadth, a, st)
         trim(st)
+
+    elif args.mode == "breadth":  # 미국 시장 폭·신용 과거 기록 채우기
+        update_us_breadth(a, st, pd.Timestamp(args.since if args.since != "2020-01-01" else "2016-01-01").date())
 
     else:  # backfill
         cal = sessions(a, max(args.days, 60))
