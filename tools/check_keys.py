@@ -14,6 +14,8 @@ KRX = "https://data-dbg.krx.co.kr/svc/apis"
 KRX_SERVICES = [
     ("idx/drvprod_dd_trd", "파생상품지수 시세정보 (VKOSPI)"),
     ("drv/opt_bydd_trd", "옵션 일별매매정보 (풋/콜)"),
+    ("drv/fut_bydd_trd", "선물 일별매매정보 (베이시스·미결제약정)"),
+    ("etp/etf_bydd_trd", "ETF 일별매매정보 (레버리지·곱버스 자금 흐름)"),
     ("sto/stk_bydd_trd", "유가증권 일별매매정보 (전 종목)"),
     ("sto/ksq_bydd_trd", "코스닥 일별매매정보 (전 종목)"),
 ]
@@ -80,6 +82,13 @@ def check_krx(key: str | None):
         if path.endswith("opt_bydd_trd") and rows:
             prods = sorted({x.get("PROD_NM", "") for x in rows})
             print(f"    상품: {', '.join(prods[:12])}")
+        if path.endswith("fut_bydd_trd") and rows:  # 코스피200 선물 이름·시장구분 확인용 (공개 로그라 몇 줄만)
+            prods = sorted({(x.get("PROD_NM", ""), x.get("MKT_NM", "")) for x in rows})
+            print(f"    상품·시장: {prods[:15]}")
+            k = [x for x in rows if "200" in x.get("PROD_NM", "") and "미니" not in x.get("PROD_NM", "")][:4]
+            for x in k:
+                print(f"    {x.get('MKT_NM')} {x.get('ISU_NM')}: 종가 {x.get('TDD_CLSPRC')} · 현물 {x.get('SPOT_PRC')} · "
+                      f"미결제 {x.get('ACC_OPNINT_QTY')}")
 
 
 if __name__ == "__main__":

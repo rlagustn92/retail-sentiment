@@ -116,6 +116,8 @@ def etf_group(name: str, index_name: str) -> str | None:
     if not inv and not lev:
         return None
     k200 = re.search(r"(코스피|KOSPI)\s*200|200\s*선물|F-KOSPI\s*200", text, re.I) is not None or name.split()[-1] in ("레버리지", "인버스")
+    if re.search(r"200\s*(?!선물|레버리지|인버스)[A-Za-z가-힣]", name):   # 200IT·200중공업 같은 업종지수
+        k200 = False
     kq = re.search(r"(코스닥|KOSDAQ)\s*150", text, re.I) is not None
     if kq:
         return "kq_lev" if lev else "kq_inv"
@@ -168,6 +170,102 @@ def etf_range(days: list[date], key: str, workers: int = 4) -> tuple[list[tuple[
     with ThreadPoolExecutor(workers) as ex:
         got = [(d, df) for d, df in ex.map(one, days) if df is not None and len(df)]
     return sorted(got, key=lambda t: t[0]), sorted(fails)
+
+
+FLOW_LINES = [("k200_lev", "코스피200 레버리지", "상승 2배"), ("k200_inv2", "코스피200 곱버스", "하락 2배"),
+              ("k200_inv", "코스피200 인버스", "하락 1배"), ("kq_lev", "코스닥150 레버리지", "상승 2배"),
+              ("kq_inv", "코스닥150 인버스", "하락"), ("other_lev", "그 밖의 레버리지", "단일종목·업종·해외")]
+UP_GROUPS, DOWN_GROUPS = ("k200_lev", "kq_lev"), ("k200_inv2", "k200_inv", "kq_inv")
+
+
+def _naive_idx(s: pd.Series) -> pd.Series:
+    idx = pd.to_datetime(s.index)
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_localize(None)
+    return pd.Series(s.values, index=idx)
+
+
+def flow_table(flow: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+    """(날짜 × 묶음 순유입, 날짜 × 묶음 순자산) 억원"""
+    if flow is None or flow.empty:
+        return None
+    f = flow.copy()
+    f["date"] = pd.to_datetime(f["date"], utc=True).dt.tz_localize(None)
+    piv = f.pivot_table(index="date", columns="group", values="flow", aggfunc="sum").sort_index().fillna(0.0)
+    aum = f.pivot_table(index="date", columns="group", values="aum", aggfunc="sum").sort_index()
+    return piv, aum
+
+
+def bet_series(piv: pd.DataFrame) -> pd.Series:
+    """상승 베팅 순유입 = 레버리지 유입 − 인버스·곱버스 유입 (억원)"""
+    up = piv[[g for g in UP_GROUPS if g in piv]].sum(axis=1)
+    down = piv[[g for g in DOWN_GROUPS if g in piv]].sum(axis=1)
+    return up - down
+
+
+def flow_summary(flow: pd.DataFrame, kospi: pd.Series | None = None, window: int = 250) -> dict | None:
+    """묶음별 그날·5일·20일 순유입과, 5일 합이 지난 1년 중 어디쯤인지"""
+    t = flow_table(flow)
+    if t is None or len(t[0]) < 30:
+        return None
+    piv, aum = t
+    d = piv.index[-1]
+
+    def pos(s5: pd.Series) -> float:
+        h = s5.dropna().iloc[-window:]
+        return float((h <= s5.iloc[-1]).mean()) if len(h) > 20 else float("nan")
+    lines = []
+    for g, name, kind in FLOW_LINES:
+        if g not in piv or aum[g].iloc[-1] < 100:   # 순자산 100억 미만 묶음은 생략
+            continue
+        s = piv[g]
+        s5 = s.rolling(5).sum()
+        lines.append({"group": g, "name": name, "kind": kind, "day": float(s.iloc[-1]), "d5": float(s5.iloc[-1]),
+                      "d20": float(s.rolling(20).sum().iloc[-1]), "pos5": pos(s5), "aum": float(aum[g].iloc[-1])})
+    bet = bet_series(piv)
+    b5 = bet.rolling(5).sum()
+    out = {"date": d, "lines": lines, "bet_day": float(bet.iloc[-1]), "bet5": float(b5.iloc[-1]),
+           "bet20": float(bet.rolling(20).sum().iloc[-1]), "bet_pos5": pos(b5), "since": int(piv.index.min().year)}
+    if kospi is not None and len(kospi):
+        k = _naive_idx(kospi).sort_index()
+        k = k[k.index <= d]
+        if len(k) > 6:
+            out["kospi5"] = float(k.iloc[-1] / k.iloc[-6] - 1)
+    return out
+
+
+CRASH_NOTE = ("과거 폭락 5번(2018년 10월·2020년 3월·2022년 9월·2024년 8월·2025년 4월) 모두 그 무렵 상승 베팅 순유입이 "
+              "1년 중 상위 5% 안에 들었어요. 한국 개인은 폭락 때 레버리지를 크게 사는 편이라, 물타기만으로 바닥인지 아닌지는 못 가려요.")
+
+
+def flow_text(sm: dict, hist: dict | None = None) -> tuple[str, str]:
+    """한 줄 판정 (제목, 설명): 지난 1년과 비교한 위치 + 과거 같은 상황 뒤 성적(hist). 앞날은 단정하지 않아요"""
+    p, k5 = sm.get("bet_pos5"), sm.get("kospi5")
+    falling = k5 is not None and k5 <= -0.03
+    mv = "" if k5 is None else f"코스피 5일 {k5:+.1%} 동안 "
+    if p != p:
+        return "기록이 짧아요", "1년 치가 쌓이면 지난 1년과 비교해 보여줘요."
+
+    def past(kind):
+        if not hist or not hist.get(kind):
+            return ""
+        s, b = hist[kind], hist["base"]["3개월"]
+        return (f" {hist['since']}년 이후 이런 쏠림 {s['n']}번 뒤 3개월 오른 확률 {s['up']:.0%}(아무 날 {b['up']:.0%}), "
+                f"중간 {s['median']:+.1%}(아무 날 {b['median']:+.1%})였어요.")
+    if p >= 0.9:
+        t = "하락장에서 레버리지 저가 매수 몰림" if falling else "상승 베팅(레버리지)으로 돈이 몰려요"
+        d = f"{mv}상승 베팅 순유입이 지난 1년 중 상위 {max(1 - p, 0.01):.0%}예요." + past("high")
+        if falling:
+            d += " " + CRASH_NOTE
+    elif p <= 0.1:
+        t = "레버리지 이탈·곱버스 쏠림 (하락 베팅 몰림)"
+        d = f"{mv}하락 베팅 쪽으로 기운 돈이 지난 1년 중 상위 {max(p, 0.01):.0%}예요." + past("low")
+    else:
+        t = "레버리지·곱버스 자금 흐름은 평소 범위"
+        d = f"{mv}상승 베팅 순유입이 지난 1년 중 {'상위' if p >= 0.5 else '하위'} {(1 - p) if p >= 0.5 else p:.0%}로 중간쯤이에요."
+        if falling:
+            d += " 빠지는 장인데도 평소보다 세게 물타지는 않고 있어요."
+    return t, d
 
 
 # ---------------------------------------------------------------- 원본 암호화 보관

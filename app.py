@@ -19,7 +19,7 @@ import streamlit.components.v1 as components
 # 모듈 파일이 바뀌었거나 이 서버에서 처음 실행이면 의존 순서대로 다시 읽고 캐시를 비워요.
 _MODS = ["core.config", "core.scoring", "core.news", "core.retail_flow", "core.realtime", "core.store",
          "core.cboe", "core.stocktwits", "core.alpaca", "core.finra", "core.fred", "core.finnhub",
-         "core.history", "core.kr", "core.metrics", "core.bottom", "core.sources", "ui"]
+         "core.history", "core.kr", "core.metrics", "core.bottom", "core.krx", "core.sources", "ui"]
 
 
 def _fresh_modules():
@@ -41,6 +41,7 @@ from core import config, sources
 from core import history
 from core import kr
 from core import bottom
+from core import krx
 from core import news as newsmod
 from core import retail_flow as rf
 from core.alpaca import Alpaca
@@ -226,7 +227,7 @@ def us_status(m: MarketData) -> list[dict]:
     if r:
         rows.append({"name": "미국 수집기 마지막 실행", "basis": f"{ago(r['ts'])} · {r['mode']}",
                      "state": ("정상" if str(r.get("ok")) in ("True", "true", "1") else "멈춤"),
-                     "note": str(r.get("note") or "")[:60]})
+                     "note": ("" if pd.isna(r.get("note")) else str(r.get("note")))[:60]})
     return rows
 
 
@@ -630,6 +631,27 @@ def kr_daily_chart(daily: pd.DataFrame):
     ).properties(height=190, background="transparent").configure_view(strokeWidth=0)
 
 
+def kr_etf_chart(flow: pd.DataFrame, days: int = 40):
+    """최근 40거래일: 상승 베팅(레버리지)과 하락 베팅(인버스·곱버스) 하루 순유입"""
+    t = krx.flow_table(flow)
+    if t is None:
+        return None
+    piv = t[0].tail(days)
+    up = piv[[g for g in krx.UP_GROUPS if g in piv]].sum(axis=1)
+    down = piv[[g for g in krx.DOWN_GROUPS if g in piv]].sum(axis=1)
+    d = pd.DataFrame({"date": piv.index, "레버리지(상승)": up.values, "인버스·곱버스(하락)": down.values})
+    long = d.melt(id_vars=["date"], var_name="who", value_name="v")
+    return alt.Chart(long).mark_bar(cornerRadius=2).encode(
+        x=alt.X("date:T", title=None, axis=alt.Axis(format="%m/%d", **AXIS, tickCount=6)),
+        xOffset="who:N",
+        y=alt.Y("v:Q", title=None, axis=alt.Axis(**AXIS, format=",.0f", tickCount=4)),
+        color=alt.Color("who:N", scale=alt.Scale(domain=["레버리지(상승)", "인버스·곱버스(하락)"], range=["#e5484d", "#3e63dd"]),
+                        legend=alt.Legend(orient="top", title=None, labelColor="#8b95a1", labelFontSize=12)),
+        tooltip=[alt.Tooltip("date:T", title="날짜", format="%m/%d"), alt.Tooltip("who:N", title="어디로"),
+                 alt.Tooltip("v:Q", title="순유입(억원)", format=",.0f")],
+    ).properties(height=190, background="transparent").configure_view(strokeWidth=0)
+
+
 @st.fragment(run_every=config.REFRESH_SEC)
 def render_kr():
     err: dict = {}
@@ -637,7 +659,7 @@ def render_kr():
     slot = kr_slot(90 if open_ else 1800)
     prefetch([(c_kr_index, m, slot) for m in kr.MARKETS] + [(c_kr_trends, kr_slot(300 if open_ else 1800))]
              + [(c_store, n) for n in ("kr_market", "kr_intraday", "kr_hist_market", "kr_hist_sector", "kr_index",
-                                        "kr_rank")])
+                                        "kr_rank", "kr_etf_flow")])
     mk = []
     for m in kr.MARKETS:
         x = safe(err, "지수 수급", c_kr_index, m, slot)
@@ -673,6 +695,21 @@ def render_kr():
         if hc:
             with st.container(key="kr_history"):
                 st.markdown(ui.kr_history_card(hc, kr.history_text(hc)), unsafe_allow_html=True)
+        ef = safe(err, "ETF 자금 흐름", c_store, "kr_etf_flow", default=pd.DataFrame())
+        idx = safe(err, "과거 기록", c_store, "kr_index", default=pd.DataFrame())
+        kospi = (pd.Series(idx[idx["market"] == "코스피"]["close"].values, index=pd.to_datetime(idx[idx["market"] == "코스피"]["date"]))
+                 if idx is not None and len(idx) else None)
+        sm = krx.flow_summary(ef, kospi) if ef is not None and len(ef) else None
+        if sm:
+            t, dsc = krx.flow_text(sm, safe(err, "ETF 자금 흐름", bottom.etf_bet, ef, idx))
+            with st.container(key="kr_etf"):
+                st.markdown(ui.kr_etf_flow_card(sm, t, dsc, f"{sm['date']:%m/%d} 기준 · 전 거래일 확정 (KRX)"),
+                            unsafe_allow_html=True)
+                ch = kr_etf_chart(ef)
+                if ch is not None:
+                    st.markdown(ui.section("최근 40거래일 하루 순유입", "억원 · 빨강 레버리지 · 파랑 인버스·곱버스"),
+                                unsafe_allow_html=True)
+                    st.altair_chart(ch, width="stretch")
         if secs:
             secs_sorted = sorted(secs, key=lambda s: -(s["big_score"] if s["big_score"] is not None else -1))
             d = secs[0]["date"]
@@ -751,14 +788,19 @@ def render_kr():
     if hmk is not None and len(hmk):
         rows.append({"name": "과거 수급 기록 (2020~)", "basis": f"{pd.to_datetime(hmk['date']).max():%m/%d}까지",
                      "state": "정상", "note": "매일 장 마감 뒤 이어 붙여요"})
+    efl = safe(err, "ETF 자금 흐름", c_store, "kr_etf_flow", default=pd.DataFrame())
+    if efl is not None and len(efl):
+        rows.append({"name": "레버리지·곱버스 자금 흐름 (KRX)", "basis": f"{pd.to_datetime(efl['date']).max():%m/%d} 확정치까지",
+                     "state": "정상", "note": "KRX가 하루 뒤 확정치를 줘요. 장 마감 뒤(16:17) 받아서 보통 전 거래일 값"})
     r = last_run(("kr",))
     if r:
         rows.append({"name": "한국 수집기 마지막 실행", "basis": f"{ago(r['ts'])} · {r['mode']}",
                      "state": "정상" if str(r.get("ok")) in ("True", "true", "1") else "멈춤",
-                     "note": str(r.get("note") or "")[:60]})
+                     "note": ("" if pd.isna(r.get("note")) else str(r.get("note")))[:60]})
     with st.container(key="kr_status"):
         st.markdown(ui.data_status(rows), unsafe_allow_html=True)
     notes = ["네이버 증권 공개 데이터예요. 지수 수급은 장중 잠정치, 섹터 수급은 대표 종목들의 일별 투자자 순매수를 더한 값이에요.",
+             "레버리지·곱버스 자금 흐름: KRX 정보데이터시스템(한국거래소 Open API) 자료로 계산했어요.",
              "섹터 수급은 장중엔 전 거래일 기준일 수 있어요(종목별 투자자 데이터가 장 마감 뒤 확정돼요).",
              "수급 판정은 상황 판단을 돕는 참고예요. 매수·매도 신호가 아니에요."]
     if err:
@@ -815,7 +857,7 @@ def c_bottom():
     us_rows = bottom.with_effect(bottom.checklist_us(spx, vix, v3, ratio, c_store("us_breadth"), c_store("us_credit"),
                                                      get(us_flow_state), fg, c_store("fred"), c_store("us_stress")))
     kr_rows = bottom.with_effect(bottom.checklist_kr(c_store("kr_hist_market"), c_store("kr_index"), c_store("kr_breadth"),
-                                                     c_store("kr_vol_ep"), c_store("kr_vol_now")))
+                                                     c_store("kr_vol_ep"), c_store("kr_vol_now"), c_store("kr_etf_flow")))
 
     def last(name, col="date", where=None):
         df = c_store(name)

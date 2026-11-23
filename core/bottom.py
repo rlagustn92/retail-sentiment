@@ -326,6 +326,33 @@ def vol_state(ep: pd.DataFrame | None, now: pd.DataFrame | None) -> dict | None:
             "peak": e.loc[e["peak"].idxmax()] if len(e) else None}
 
 
+# ---------------------------------------------------------------- 한국: 레버리지·곱버스 쏠림 (KRX ETF)
+def etf_bet(flow: pd.DataFrame | None, index: pd.DataFrame | None, low: float = 0.10, high: float = 0.90) -> dict | None:
+    """상승 베팅(레버리지 − 인버스·곱버스) 5일 순유입이 지난 1년 중 하위 10%·상위 10%로 처음 들어간 날과 그 뒤 코스피"""
+    from core import krx
+    t = krx.flow_table(flow)
+    kospi = _series(index, "close", where={"market": "코스피"}) if index is not None and len(index) else pd.Series(dtype=float)
+    if t is None or len(t[0]) < 300 or len(kospi) < 300:
+        return None
+    b5 = krx.bet_series(t[0]).rolling(5).sum()
+    pos = b5.rolling(250, min_periods=120).apply(lambda h: (h <= h[-1]).mean(), raw=True)
+    k = kospi[kospi.index >= pos.index.min()]
+
+    def sig(cond):
+        first = cond & ~cond.shift(1, fill_value=False)
+        out = []
+        for d in pos.index[first.values]:
+            if not out or (d - out[-1]).days > 20:
+                out.append(d)
+        return out
+    lo, hi = sig(pos <= low), sig(pos >= high)
+    base = base_stats(k)
+    fl, fh = forward_stats(k, lo), forward_stats(k, hi)
+    return {"pos": float(pos.iloc[-1]), "b5": float(b5.iloc[-1]), "date": pos.index[-1], "since": int(pos.index.min().year),
+            "low_dates": lo, "high_dates": hi, "low_stats": fl, "high_stats": fh, "base": base,
+            "low": fl["3개월"], "high": fh["3개월"]}
+
+
 # ---------------------------------------------------------------- 미국: 금융 스트레스 (세인트루이스 연준)
 def stress_state(stress: pd.DataFrame | None, hi: float = 1.0, lo: float = 0.0) -> dict | None:
     """STLFSI4: 0이 평균, 1 = 평균보다 1표준편차 높은 스트레스. 0 아래로 내려왔다가 다시 1을 넘은 첫 주를 신호로"""
@@ -475,7 +502,8 @@ def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series 
 
 
 def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, breadth: pd.DataFrame | None,
-                 vol_ep: pd.DataFrame | None = None, vol_now: pd.DataFrame | None = None) -> list[dict]:
+                 vol_ep: pd.DataFrame | None = None, vol_now: pd.DataFrame | None = None,
+                 etf_flow: pd.DataFrame | None = None) -> list[dict]:
     rows = []
     kospi = _series(index, "close", where={"market": "코스피"}) if index is not None and len(index) else pd.Series(dtype=float)
     ok = len(kospi) > 300
@@ -552,6 +580,21 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
         rows[-1]["compare"] = ("급등 첫날 샀다면", forward_stats(kospi, starts))
     elif vol_now is not None:
         rows.append(_row("kr_vkospi", "확인", "VKOSPI 공포 꺾임", "데이터 없음", "VKOSPI 기록을 쌓는 중 (KRX)", "", ""))
+    # 참고: 레버리지·곱버스 쏠림 (개인 베팅 방향)
+    eb = etf_bet(etf_flow, index)
+    if eb:
+        p = eb["pos"]
+        where = f"상위 {max(1 - p, 0.01):.0%}" if p >= 0.5 else f"하위 {max(p, 0.01):.0%}"
+        rows.append(_row("kr_etf", "참고", "레버리지·곱버스 쏠림 (개인 베팅)",
+                         "켜짐" if p <= 0.10 else "아직",
+                         f"상승 베팅 5일 순유입 {eb['b5']:+,.0f}억 ({eb['date']:%m/%d}) · 지난 1년 중 {where}",
+                         "레버리지 ETF로 들어온 돈 − 인버스·곱버스로 들어온 돈(상장좌수 변화 × NAV)을 5일 합한 거예요. "
+                         "개인 거래 비중이 높은 상품이라 개인이 어느 쪽에 거는지 보여줘요 (KRX 정보데이터).",
+                         "표는 하락 베팅 쪽으로 크게 기운 첫날(1년 중 하위 10%)에 샀다면이에요. "
+                         "반대로 과거 폭락 5번은 모두 개인이 레버리지를 크게 산(상위 5%) 무렵이었어요. "
+                         "어느 쪽이든 그 뒤 성적이 아무 날과 크게 다르지 않아서 개수에 넣지 않아요.",
+                         eb["low_stats"], eb["base"], f"{len(eb['low_dates'])}번 · {eb['since']}년~", "코스피"))
+        rows[-1]["compare"] = ("상승 베팅 쏠림(상위 10%) 첫날 샀다면", eb["high_stats"])
     return rows
 
 

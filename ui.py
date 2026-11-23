@@ -620,3 +620,30 @@ def signal_rows(rows: list[dict], title: str, sub: str, verdict: dict | None = N
 <div class="rr"><div class="v" style="color:{c};font-size:15px">{esc(label)}</div></div></summary>
 <div class="body"><b>이게 뭐예요</b> {esc(r['what'])}<br><b>읽는 법</b> {esc(r['how'])}{stats}</div></details>""")
     return flat("".join(out))
+
+
+# ---------------------------------------------------------------- 한국: 레버리지·곱버스 자금 흐름
+def kr_etf_flow_card(sm: dict, title: str, desc: str, basis: str) -> str:
+    """ETF 상장좌수 변화로 계산한 순유입 (억원). 빨강 = 들어옴, 파랑 = 빠짐"""
+    def cell(x):
+        t, c = _won(x)
+        return f'<td style="color:{c}">{esc(t)}</td>'
+    trs = []
+    for r in sm["lines"]:
+        p = r["pos5"]
+        ptxt = "–" if p != p else (f"상위 {max(1 - p, 0.01):.0%}" if p >= 0.5 else f"하위 {max(p, 0.01):.0%}")
+        trs.append(f"<tr><th>{esc(r['name'])}<div style='font-size:11px;color:var(--faint)'>{esc(r['kind'])} · 순자산 "
+                   f"{esc(_won(r['aum'])[0].lstrip('+'))}</div></th>{cell(r['day'])}{cell(r['d5'])}{cell(r['d20'])}"
+                   f"<td style='color:var(--sub)'>{esc(ptxt)}</td></tr>")
+    bp = sm.get("bet_pos5")
+    btxt = "–" if bp is None or bp != bp else (f"상위 {max(1 - bp, 0.01):.0%}" if bp >= 0.5 else f"하위 {max(bp, 0.01):.0%}")
+    trs.append(f"<tr><th><b style='color:var(--text)'>상승 베팅 − 하락 베팅</b>"
+               f"<div style='font-size:11px;color:var(--faint)'>레버리지 유입 − 인버스·곱버스 유입</div></th>"
+               f"{cell(sm['bet_day'])}{cell(sm['bet5'])}{cell(sm['bet20'])}<td style='color:var(--sub)'>{esc(btxt)}</td></tr>")
+    return flat(f"""<div class="sect">레버리지·곱버스 자금 흐름</div>
+<div class="sectsub">{esc(basis)} · ETF 상장좌수 변화 × NAV = 실제로 들어오고 나간 돈(억원) · 빨강 들어옴 · 파랑 빠짐</div>
+<div class="verdict"><div class="vt">{esc(title)}</div><div class="vd">{esc(desc)}</div></div>
+<table class="ftab"><thead><tr><th></th><th>그날</th><th>5일</th><th>20일</th><th>5일 합 1년 중</th></tr></thead>
+<tbody>{''.join(trs)}</tbody></table>
+<div class="sectsub" style="margin-top:6px">레버리지·인버스 ETF는 개인 거래 비중이 높아서 개인이 어느 쪽에 거는지 보는 데 써요. 네이버 순매수와 달리 LP 물량에 흔들리지 않아요.
+설정·환매가 좌수에 반영되는 데 하루쯤 걸릴 수 있어요.</div>""")
