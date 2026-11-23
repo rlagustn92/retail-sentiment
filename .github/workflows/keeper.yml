@@ -1,0 +1,49 @@
+# 수집 순환: 이 저장소에선 GitHub 예약(cron)이 거의 안 걸려서(2026-11-23 확인), 한 번 시작하면 스스로 이어 가요.
+# 한 실행이 최대 5시간 30분 동안 예전 예약 시각표대로 미국·한국을 수집하고, 시작 10분 뒤 다음 실행을 대기열에 걸어 둬요.
+# 끊겼으면: Actions 탭 → keeper → Run workflow (한 번만 누르면 다시 이어 가요)
+name: keeper
+
+on:
+  workflow_dispatch:
+  schedule:   # 순환이 끊겼을 때 되살리는 예비 시작 (걸리면 좋고, 안 걸려도 순환은 스스로 이어 가요)
+    - cron: "41 23 * * 0-4"   # 한국시간 08:41
+    - cron: "11 13 * * 1-5"   # 미국 장 열기 전
+
+permissions:
+  contents: write   # data 브랜치에 저장
+  actions: write    # 다음 실행을 대기열에 걸기
+
+concurrency:
+  group: keeper
+  cancel-in-progress: false   # 지금 실행이 끝나면 대기열의 다음 실행이 이어받아요 (대기열엔 늘 하나)
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements-collector.txt
+
+      - name: data 브랜치 가져오기
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git clone --depth 1 --branch data "$URL" data
+
+      - name: 수집 순환
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
+          ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
+          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
+          FRED_KEY: ${{ secrets.FRED_KEY }}
+          KRX_KEY: ${{ secrets.KRX_KEY }}
+        run: python tools/keeper.py --data data --minutes 330

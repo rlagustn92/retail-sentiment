@@ -3,9 +3,10 @@
 name: collect
 
 on:
-  schedule:
-    - cron: "4-59/15 13-21 * * 1-5"   # 미국 정규장 (서머타임 여부와 관계없이 커버)
-    - cron: "40 21 * * 1-5"        # 장 마감 후 정리
+  # 예약(cron)은 keeper 워크플로가 대신 돌려요 (이 저장소에선 GitHub 예약이 거의 안 걸려서)
+  # schedule:
+  #   - cron: "4-59/15 13-21 * * 1-5"   # 미국 정규장 (서머타임 여부와 관계없이 커버)
+  #   - cron: "40 21 * * 1-5"        # 장 마감 후 정리
   workflow_dispatch:
     inputs:
       mode:

@@ -3,9 +3,11 @@
 name: collect-kr
 
 on:
-  schedule:
-    - cron: "3-59/10 0-6 * * 1-5"   # 한국시간 9시 3분~15시 53분 (정각은 GitHub가 자주 밀려서 피함)
-    - cron: "17 7 * * 1-5"         # 한국시간 16시 17분: 일별 확정치 + 과거 기록·순위표 갱신
+  # 예약(cron)은 keeper 워크플로가 대신 돌려요 (이 저장소에선 GitHub 예약이 거의 안 걸려서)
+  # schedule:
+  #   - cron: "3-59/10 0-6 * * 1-5"   # 한국시간 9시 3분~15시 53분 (정각은 GitHub가 자주 밀려서 피함)
+  #   - cron: "17 7 * * 1-5"         # 한국시간 16시 17분: 일별 확정치 + 과거 기록·순위표 갱신
+  #   - cron: "37 23 * * 0-4"        # 한국시간 08시 37분(월~금): 전날 KRX 확정치(VKOSPI·ETF 자금 흐름) — KRX는 하루 뒤에 줘요
   workflow_dispatch:
     inputs:
       mode:
@@ -57,6 +59,8 @@ jobs:
             MODE="${{ github.event.inputs.mode }}"
           elif [ "${{ github.event.schedule }}" = "17 7 * * 1-5" ]; then
             MODE=kr_daily
+          elif [ "${{ github.event.schedule }}" = "37 23 * * 0-4" ]; then
+            MODE=kr_vol
           else
             MODE=kr
           fi
