@@ -32,10 +32,12 @@
 
 | 항목 | 위치 |
 |---|---|
-| 앱 주소 | https://tusimcheck.streamlit.app |
+| **빠른 화면 (GitHub Pages)** | **https://rlagustn92.github.io/retail-sentiment/** — 수집할 때마다 새로 만든 정적 페이지. 서버가 없어서 안 잠들고 바로 떠요. 폰은 '홈 화면에 추가' |
+| 앱 주소 (Streamlit) | https://tusimcheck.streamlit.app — 열 때마다 계산 (느림). Pages가 자리 잡으면 정리 |
 | 코드 | https://github.com/rlagustn92/retail-sentiment (공개, `main` 브랜치) |
-| 수집 기록 | 같은 저장소의 `data` 브랜치 (CSV: retail_flow, putcall, stocktwits, score, news, finra_short, fred) |
-| 수집기 | Actions → **collect** (미국: 평일 한국시간 밤 10시~아침 6시 15분마다, 아침 6시 40분 마감 정리 · 한국: 평일 9시~15시 50분 10분마다, 16시 10분 일별 확정) |
+| 수집 기록 | 같은 저장소의 `data` 브랜치 (CSV) |
+| 수집기 | Actions → **keeper** (수집 순환). 이 저장소에선 GitHub 예약(cron)이 거의 안 걸려서, 한 번 시작하면 5시간 30분씩 스스로 이어 가요. 시각표: 한국 평일 9:03~15:53 10분마다·16:17 정리·08:37 전날 KRX 확정치, 미국 장중 15분마다·장 마감 정리. 수집마다 **pages** 워크플로로 페이지를 다시 만들어요 |
+| 순환이 끊겼으면 | Actions → keeper → Run workflow 한 번 (데이터 상태 칸의 '수집기 마지막 실행'이 오래됐으면) |
 | 화면 설정 | share.streamlit.io → tusimcheck → Settings (Python 3.12, Secrets) |
 
 **키·토큰이 들어 있는 곳** (값은 어디에도 적지 않아요)
