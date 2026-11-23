@@ -27,7 +27,7 @@ def fetch_recent(symbol: str, minutes: int = 60, max_pages: int = 10) -> tuple[l
     covered = float(minutes)
     oldest = None
     for _ in range(max_pages):
-        r = requests.get(URL.format(symbol), params=params, headers=UA, timeout=15)
+        r = requests.get(URL.format(symbol), params=params, headers=UA, timeout=6)
         r.raise_for_status()
         j = r.json()
         msgs = j.get("messages", [])

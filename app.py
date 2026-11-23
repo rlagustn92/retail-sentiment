@@ -163,6 +163,26 @@ def c_demo():
     return sources.demo_market()
 
 
+def prefetch(jobs: list):
+    """서로 상관없는 데이터를 동시에 받아 캐시에 넣어 둬요. 이어지는 순서대로의 호출은 캐시에서 바로 나와요.
+    jobs = [(함수, 인자...)] 또는 [(여러 함수를 순서대로 부르는 함수,)]"""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+
+    ctx = get_script_run_ctx()
+
+    def run(job):
+        add_script_run_ctx(threading.current_thread(), ctx)
+        try:
+            job[0](*job[1:])
+        except Exception:
+            pass  # 실패는 본 호출에서 다시 잡아요
+
+    with ThreadPoolExecutor(min(12, len(jobs) or 1)) as ex:
+        list(ex.map(run, jobs))
+
+
 def safe(errors: dict, name: str, fn, *args, default=None):
     try:
         return fn(*args)
@@ -203,9 +223,22 @@ def retail_live(stored: pd.DataFrame, bars: pd.DataFrame, sym: str, now: datetim
     return pd.concat([stored, new], ignore_index=True) if not stored.empty else new
 
 
+def _alpaca_all():
+    """알파카는 호출 간격을 지켜야 해서 한 줄로 순서대로"""
+    for fn, args in ((c_clock, ()), (c_snaps, ()), (c_bars15, ()), (c_daily, ("sip",)), (c_daily, ("iex",)),
+                     (c_news_recent, ())):
+        try:
+            fn(*args)
+        except Exception:
+            pass
+
+
 def live_market(group: str) -> MarketData:
     now = datetime.now(timezone.utc)
     err: dict = {}
+    prefetch([(_alpaca_all,), (c_vix_hist,), (c_vix_now,), (c_putcall_intraday,)]
+             + [(c_store, n) for n in ("retail", "putcall", "stocktwits", "score", "news", "finra", "fred")]
+             + [(c_stocktwits, s) for s in config.social_symbols()])
     clock = safe(err, "장 시간", c_clock, default={}) or {}
     is_open = bool(clock.get("is_open"))
     bars = safe(err, "시세(15분봉)", c_bars15, default=None)
@@ -528,6 +561,9 @@ def render_kr():
     err: dict = {}
     open_ = kr.is_open()
     slot = kr_slot(90 if open_ else 1800)
+    prefetch([(c_kr_index, m, slot) for m in kr.MARKETS] + [(c_kr_trends, kr_slot(300 if open_ else 1800))]
+             + [(c_store, n) for n in ("kr_market", "kr_intraday", "kr_hist_market", "kr_hist_sector", "kr_index",
+                                        "kr_rank")])
     mk = []
     for m in kr.MARKETS:
         x = safe(err, "지수 수급", c_kr_index, m, slot)
@@ -578,17 +614,24 @@ def render_kr():
             side_lbl = c2.segmented_control("방향", ["순매도", "순매수"], default="순매도", key="kr_side",
                                             label_visibility="collapsed") or "순매도"
             who = next(k for k, v in kr.INVESTORS.items() if v == who_lbl)
-            names = (safe(err, "종목 목록", c_kr_universe, kr_slot(6 * 3600), default=pd.DataFrame()) if kind == "종목"
-                     else safe(err, "ETF 목록", c_kr_etfs, kr_slot(6 * 3600), default=pd.DataFrame()))
+            side = "sell" if side_lbl == "순매도" else "buy"
+            df, day = kr.rankings_from_table(safe(err, "순위표", c_store, "kr_rank", default=pd.DataFrame()),
+                                             kind, who, side, 15)
+            names = None
+            if df.empty:  # 수집기가 만든 순위표가 아직 없으면 직접 계산 (느려요)
+                names = (safe(err, "종목 목록", c_kr_universe, kr_slot(6 * 3600), default=pd.DataFrame()) if kind == "종목"
+                         else safe(err, "ETF 목록", c_kr_etfs, kr_slot(6 * 3600), default=pd.DataFrame()))
+            else:
+                st.markdown(ui.kr_rank(df, who, side_lbl, day), unsafe_allow_html=True)
             if names is not None and len(names):
                 rt = safe(err, "종목 수급", c_kr_rank_trends, kr_slot(600 if live else 3600),
                           tuple(names["code"]), default=pd.DataFrame())
-                df, day = kr.rankings(rt, names, who, "sell" if side_lbl == "순매도" else "buy", 15)
+                df, day = kr.rankings(rt, names, who, side, 15)
                 st.markdown(ui.kr_rank(df, who, side_lbl, day), unsafe_allow_html=True)
-                if kind == "ETF":
-                    st.markdown(ui.footer(["ETF의 '기관'에는 LP(유동성공급자, 증권사) 물량이 섞여 있어요. 개인이 사면 LP가 팔아 주기 때문에 "
-                                           "기관 순매도로 잡히는 경우가 많아요. ETF에서는 개인·외국인 쏠림 위주로 보세요."]),
-                                unsafe_allow_html=True)
+            if kind == "ETF":
+                st.markdown(ui.footer(["ETF의 '기관'에는 LP(유동성공급자, 증권사) 물량이 섞여 있어요. 개인이 사면 LP가 팔아 주기 때문에 "
+                                       "기관 순매도로 잡히는 경우가 많아요. ETF에서는 개인·외국인 쏠림 위주로 보세요."]),
+                            unsafe_allow_html=True)
     else:
         s = next((x for x in secs if x["key"] == KR_KEY), None)
         if s is None:

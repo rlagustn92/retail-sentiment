@@ -454,6 +454,34 @@ def rankings(trends: pd.DataFrame, names: pd.DataFrame, who: str, side: str, n: 
     return df.reset_index(), day
 
 
+def rank_table(names: pd.DataFrame, trends: pd.DataFrame, kind: str) -> pd.DataFrame:
+    """종목별 가장 최근 거래일 순매수 + 5일 합계 (수집기가 미리 만들어 kr_rank.csv로 저장)"""
+    if names is None or names.empty or trends is None or trends.empty:
+        return pd.DataFrame()
+    t = trends[trends["code"].isin(names["code"])]
+    if t.empty:
+        return pd.DataFrame()
+    day = t["date"].max()
+    last5 = sorted(t["date"].unique())[-5:]
+    cols = ["foreign", "inst", "personal"]
+    cur = t[t["date"] == day].set_index("code")[cols + ["chg"]]
+    five = t[t["date"].isin(last5)].groupby("code")[cols].sum().add_prefix("five_")
+    out = cur.join(five).join(names.set_index("code")[["name", "market"]]).reset_index()
+    out["kind"], out["date"] = kind, str(day)
+    return out
+
+
+def rankings_from_table(tbl: pd.DataFrame, kind: str, who: str, side: str, n: int = 15):
+    """미리 계산된 순위표 → (표, 기준일)"""
+    t = tbl[tbl["kind"] == kind].copy() if tbl is not None and len(tbl) and "kind" in tbl else pd.DataFrame()
+    if t.empty:
+        return pd.DataFrame(), None
+    day = pd.to_datetime(t["date"]).dt.date.max()
+    t = t[(t[who] < 0) if side == "sell" else (t[who] > 0)].sort_values(who, ascending=(side == "sell")).head(n)
+    t["five"] = t[f"five_{who}"]
+    return t.reset_index(drop=True), day
+
+
 def is_open(now=None) -> bool:
     """한국 정규장(평일 9:00~15:30) 여부. 공휴일은 네이버 marketStatus로 따로 확인해요."""
     t = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")

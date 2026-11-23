@@ -21,11 +21,12 @@ FILES = {
     "kr_hist_market": "kr_hist_market.csv",  # date, market(코스피·코스닥·전체), foreign, inst, personal, n — 시총 상위 300 합
     "kr_hist_sector": "kr_hist_sector.csv",  # date, sector, foreign, inst, personal, chg
     "kr_index": "kr_index.csv",              # date, market, close, chg
+    "kr_rank": "kr_rank.csv",                # kind, code, name, market, date, 투자자별 그날·5일 순매수 (덮어씀)
 }
 KEYS = {"retail": ["bucket", "sym"], "putcall": ["date"], "stocktwits": ["ts", "sym"],
         "score": ["ts", "group"], "news": ["id"], "finra": ["date", "sym"], "fred": ["date", "series"],
         "kr_intraday": ["ts", "market"], "kr_market": ["date", "market"], "kr_hist_market": ["date", "market"],
-        "kr_hist_sector": ["date", "sector"], "kr_index": ["date", "market"]}
+        "kr_hist_sector": ["date", "sector"], "kr_index": ["date", "market"], "kr_rank": ["kind", "code"]}
 DATE_COLS = {"retail": ["bucket"], "stocktwits": ["ts"], "score": ["ts"], "putcall": ["date"],
              "news": ["ts"], "finra": ["date"], "fred": ["date"], "kr_intraday": ["ts"], "kr_market": ["date"],
              "kr_hist_market": ["date"], "kr_hist_sector": ["date"], "kr_index": ["date"]}
@@ -46,10 +47,10 @@ class LocalStore:
 
     def read(self, name: str) -> pd.DataFrame:
         p = self.root / FILES[name]
-        return _parse(name, p.read_text()) if p.exists() else pd.DataFrame()
+        return _parse(name, p.read_text(encoding="utf-8")) if p.exists() else pd.DataFrame()
 
     def write(self, name: str, df: pd.DataFrame) -> None:
-        df.to_csv(self.root / FILES[name], index=False)
+        df.to_csv(self.root / FILES[name], index=False, encoding="utf-8")
 
     def append(self, name: str, rows: pd.DataFrame) -> pd.DataFrame:
         if rows is None or rows.empty:

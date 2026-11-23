@@ -174,6 +174,17 @@ def update_kr(st: LocalStore, now: datetime, daily: bool):
         log("한국 장 닫힘 — 건너뜀", df["status"].tolist())
 
 
+def update_kr_rank(st: LocalStore):
+    """누가 뭘 팔고 샀나: 시총 상위 300 종목 + ETF 150개의 최근 거래일 투자자별 순매수 (앱이 바로 읽게)"""
+    t0 = datetime.now(timezone.utc)
+    u, e = kr.universe(), kr.etf_universe()
+    trends = kr.all_trends(days=6, workers=8, codes=list(u["code"]) + list(e["code"]))
+    tbl = pd.concat([kr.rank_table(u, trends, "종목"), kr.rank_table(e, trends, "ETF")], ignore_index=True)
+    if len(tbl):
+        st.write("kr_rank", tbl)
+    log(f"한국 순위표 {len(tbl)}종목 ({(datetime.now(timezone.utc) - t0).seconds}초)")
+
+
 def update_kr_hist(st: LocalStore, since):
     """한국 과거 수급(시총 상위 300 합·섹터별·지수 등락)을 since부터 채우고, 이미 있으면 최근 것만 이어 붙여요"""
     old = st.read("kr_hist_market")
@@ -254,6 +265,8 @@ def main():
         now = datetime.now(timezone.utc)
         if args.mode != "kr_hist":
             update_kr(st, now, daily=args.mode == "kr_daily")
+        if args.mode == "kr_daily" or (args.mode == "kr" and now.minute < 10 and kr.is_open(now)):
+            attempt("한국 순위표", update_kr_rank, st)  # 장 마감 뒤 + 장중엔 한 시간에 한 번
         if args.mode in ("kr_daily", "kr_hist"):
             attempt("한국 과거 수급", update_kr_hist, st, pd.Timestamp(args.since).date())
             trim(st)

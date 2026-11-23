@@ -4,8 +4,8 @@ name: collect-kr
 
 on:
   schedule:
-    - cron: "*/10 0-6 * * 1-5"     # 한국시간 9시~15시 50분
-    - cron: "10 7 * * 1-5"         # 한국시간 16시 10분: 일별 확정치 + 과거 기록 갱신
+    - cron: "3-59/10 0-6 * * 1-5"   # 한국시간 9시 3분~15시 53분 (정각은 GitHub가 자주 밀려서 피함)
+    - cron: "17 7 * * 1-5"         # 한국시간 16시 17분: 일별 확정치 + 과거 기록·순위표 갱신
   workflow_dispatch:
     inputs:
       mode:
@@ -53,7 +53,7 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             MODE="${{ github.event.inputs.mode }}"
-          elif [ "${{ github.event.schedule }}" = "10 7 * * 1-5" ]; then
+          elif [ "${{ github.event.schedule }}" = "17 7 * * 1-5" ]; then
             MODE=kr_daily
           else
             MODE=kr

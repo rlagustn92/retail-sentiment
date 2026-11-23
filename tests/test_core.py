@@ -323,3 +323,17 @@ def test_kr_history_compare():
     t = kr.history_text(c)
     assert "평소의 6.0배" in t and "'2020 코로나 폭락' 최악의 날보다는 약하고, 나머지보다는 세요" in t
     assert "최근 5일 큰손 합계" in t
+
+
+def test_kr_rank_table_roundtrip(tmp_path):
+    rows = []
+    for d in pd.bdate_range(end="2026-11-20", periods=6):
+        for code, f in (("A", -100.0), ("B", 50.0), ("C", -300.0)):
+            rows.append({"date": d.date(), "code": code, "foreign": f, "inst": 0.0, "personal": -f, "close": 1.0, "chg": -0.01})
+    names = pd.DataFrame({"code": ["A", "B", "C"], "name": ["가", "나", "다"], "market": ["코스피"] * 3})
+    tbl = kr.rank_table(names, pd.DataFrame(rows), "종목")
+    st = LocalStore(tmp_path)
+    st.write("kr_rank", tbl)
+    df, day = kr.rankings_from_table(st.read("kr_rank"), "종목", "foreign", "sell", 5)
+    assert list(df["name"]) == ["다", "가"] and df["five"].iloc[0] == -1500 and str(day) == "2026-11-20"
+    assert kr.rankings_from_table(st.read("kr_rank"), "ETF", "foreign", "sell")[0].empty
