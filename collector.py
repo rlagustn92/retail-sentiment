@@ -235,7 +235,7 @@ def update_kr_hist(st: LocalStore, since):
     start = since
     if not old.empty:
         last = old[old["market"] == "전체"].sort_values("date").tail(1)
-        if len(last) and int(last["n"].iloc[0]) >= 270:  # 거의 다 받아져 있으면 최근 것만 이어 붙여요
+        if len(last) and int(last["n"].iloc[0]) >= 270 and not st.read("kr_breadth").empty:  # 거의 다 받아져 있으면 최근 것만 이어 붙여요
             start = max(since, (pd.to_datetime(old["date"]).max() - pd.Timedelta(days=14)).date())
         else:
             log(f"한국 과거 수급이 덜 채워져 있어서({int(last['n'].iloc[0]) if len(last) else 0}종목) 처음부터 다시 받아요")
