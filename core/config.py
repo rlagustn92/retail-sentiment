@@ -134,6 +134,10 @@ WEIGHTS = {
 FRED_SERIES = {"credit": "BAMLH0A0HYM2"}   # FRED가 최근 3년치만 줘요
 # 연준 금융 스트레스 지수 (매주): 과거 위기와 비교용이라 처음부터 다 받아 따로 보관 (us_stress.csv)
 FRED_STRESS = {"STLFSI4": "1993-12-31", "NFCI": "1971-01-08"}
+
+# KRX Open API 서비스 이용기간 (최대 1년, 만료 전에 openapi.krx.co.kr › 마이페이지 › API 이용현황에서 '갱신')
+# 새로 승인된 서비스가 생기면 여기에 사용기간 끝나는 날을 더해요. 30일 전부터 '데이터 상태'에 갱신 필요가 떠요.
+KRX_EXPIRES = {"KRX 지수·ETF 등 8개 (VKOSPI·레버리지 자금 흐름)": "2027-09-14"}
 FINRA_LOOKBACK = 250    # FINRA 장외 공매도: 최근 몇 거래일을 채워 둘지 (약 1년)
 
 # 기준치(과거 기록)가 부족할 때 쓰는 고정 눈금: (0점 값, 100점 값)

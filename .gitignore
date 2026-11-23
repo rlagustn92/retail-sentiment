@@ -4,3 +4,8 @@ __pycache__/
 .env
 data/
 .venv/
+
+# 로컬 미리보기·빌드 임시 파일
+.claude/
+.cache/
+site/

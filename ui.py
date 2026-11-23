@@ -435,8 +435,9 @@ def section(title: str, sub: str = "") -> str:
 
 def data_status(rows: list[dict]) -> str:
     """rows: name, basis(기준), age(몇 분 전), state('정상'|'지연'|'멈춤'|'장 마감'|'없음'), note"""
-    color = {"정상": "#30a46c", "장 마감": "var(--sub)", "지연": "#f5a524", "멈춤": "#e5484d", "없음": "var(--faint)"}
-    bad = [r for r in rows if r["state"] in ("지연", "멈춤")]
+    color = {"정상": "#30a46c", "장 마감": "var(--sub)", "지연": "#f5a524", "멈춤": "#e5484d", "없음": "var(--faint)",
+             "갱신 필요": "#f5a524", "만료": "#e5484d"}
+    bad = [r for r in rows if r["state"] in ("지연", "멈춤", "갱신 필요", "만료")]
     head = "모두 정상" if not bad else f"{len(bad)}개 확인 필요"
     hc = "#30a46c" if not bad else "#f5a524"
     trs = "".join(

@@ -792,6 +792,7 @@ def render_kr():
     if efl is not None and len(efl):
         rows.append({"name": "레버리지·곱버스 자금 흐름 (KRX)", "basis": f"{pd.to_datetime(efl['date']).max():%m/%d} 확정치까지",
                      "state": "정상", "note": "KRX가 하루 뒤 확정치를 줘요. 장 마감 뒤(16:17) 받아서 보통 전 거래일 값"})
+    rows += krx.expiry_rows()
     r = last_run(("kr",))
     if r:
         rows.append({"name": "한국 수집기 마지막 실행", "basis": f"{ago(r['ts'])} · {r['mode']}",
@@ -909,6 +910,7 @@ def render_bottom():
              "state": "정상" if d["hy"] is not None or d["stress"] is not None else "없음",
              "note": "스프레드는 매일, 스트레스 지수는 매주(금요일 기준) 나와요. 미국 장 마감 뒤 받아요"},
             {"name": "CNN 공포탐욕", "basis": "열 때 받아요 (30분 캐시)", "state": "정상" if b["fg"] else "없음", "note": ""}]
+    rows += krx.expiry_rows()
     with st.container(key="b_status"):
         st.markdown(ui.data_status(rows), unsafe_allow_html=True)
     st.markdown(ui.footer([

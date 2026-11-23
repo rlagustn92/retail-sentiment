@@ -94,6 +94,19 @@ def vkospi_range(days: list[date], key: str, workers: int = 4) -> tuple[pd.DataF
     return df.sort_values("date").reset_index(drop=True), sorted(fails)
 
 
+def expiry_rows(today: date | None = None, warn_days: int = 30) -> list[dict]:
+    """데이터 상태 칸에 넣을 KRX 이용기간 줄 (만료 30일 전부터 '갱신 필요')"""
+    from core import config
+    today = today or pd.Timestamp.now(tz="Asia/Seoul").date()
+    rows = []
+    for name, end in config.KRX_EXPIRES.items():
+        left = (date.fromisoformat(end) - today).days
+        state = "만료" if left < 0 else "갱신 필요" if left <= warn_days else "정상"
+        rows.append({"name": f"KRX 이용기간 · {name}", "basis": f"{end}까지 (D-{max(left, 0)})", "state": state,
+                     "note": "openapi.krx.co.kr › 마이페이지 › API 이용현황에서 '갱신'" if state != "정상" else "1년마다 갱신"})
+    return rows
+
+
 # ---------------------------------------------------------------- ETF 자금 흐름 (레버리지·곱버스)
 ETF_START = date(2016, 1, 1)   # 곱버스(코스피200 인버스2X)가 2016년 9월에 나와서 그 앞쪽만 조금 넉넉히
 ETF_GROUPS = {   # 공개 파일엔 이 묶음별 합계(계산한 결과)만 남겨요

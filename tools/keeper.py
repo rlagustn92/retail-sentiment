@@ -80,6 +80,9 @@ def run_slot(name: str, mode: str, data: str):
     sh(["git", "-C", data, "reset", "-q", "--hard", "FETCH_HEAD"], 60)
     sh([sys.executable, "collector.py", mode, "--data", data], 40 * 60)
     sh(["bash", "tools/save_data.sh", name], 10 * 60)
+    # 새 데이터로 GitHub Pages 다시 만들기 (따로 도는 pages 워크플로)
+    repo = os.environ.get("GITHUB_REPOSITORY", "rlagustn92/retail-sentiment")
+    sh(["gh", "workflow", "run", "pages.yml", "--ref", "main", "-R", repo], 60)
 
 
 def main():
