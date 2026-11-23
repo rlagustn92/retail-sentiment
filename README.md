@@ -22,7 +22,7 @@
 
 - 화면: Streamlit Cloud (무료)
 - 기록 수집: GitHub Actions (무료, 장중 15분마다)
-- 데이터: 알파카 무료 키, CBOE, Stocktwits, FINRA 장외 공매도, FRED, Finnhub 뉴스 (모두 무료)
+- 데이터: 알파카 무료 키, CBOE, Stocktwits, FINRA 장외 공매도, FRED, Finnhub 뉴스, 네이버 증권, KRX Open API (모두 무료)
 
 키 없이 실행하면 데모 데이터로 화면이 떠요.
 
@@ -40,8 +40,9 @@
 
 **키·토큰이 들어 있는 곳** (값은 어디에도 적지 않아요)
 - GitHub 저장소 Secrets: `ALPACA_KEY`, `ALPACA_SECRET` (모의계좌 키, 수집기용), `FINNHUB_KEY` (뉴스 보충, 없으면 건너뜀)
-  - `FRED_KEY` (하이일드 스프레드, 없으면 키 없는 주소로 시도하지만 자주 막혀요)
-  - Finnhub·FRED 키는 키를 복사(Ctrl+C)한 뒤 저장소 폴더의 **`키등록.cmd`를 더블클릭**하고 Enter만 누르면 돼요(클립보드에서 읽어요). FINRA는 키가 필요 없어요.
+  - `FRED_KEY` (하이일드 스프레드·연준 금융 스트레스, 없으면 키 없는 주소로 시도하지만 자주 막혀요)
+  - `KRX_KEY` (VKOSPI, openapi.krx.co.kr 인증키 + '파생상품지수 시세정보' 이용 승인). 약관상 원본을 공개하면 안 돼서 원본은 이 키로 암호화한 `kr_vkospi.enc`로만 보관하고, 공개 파일엔 급등 구간·지금 값만 남겨요.
+  - Finnhub·FRED·KRX 키는 키를 복사(Ctrl+C)한 뒤 저장소 폴더의 **`키등록.cmd`를 더블클릭**하고 Enter만 누르면 돼요(클립보드에서 읽어요). FINRA는 키가 필요 없어요.
 - Streamlit Secrets: `ALPACA_KEY`, `ALPACA_SECRET`, `GH_REPO`, `GH_TOKEN`, `DATA_BRANCH`
   - `GH_TOKEN`은 공개 저장소 읽기 전용 토큰이에요. 공개 저장소라도 GitHub 요청 한도 때문에 넣어 둬요. 만료되면 새로 만들어 Streamlit Secrets 값만 바꾸면 돼요.
 
@@ -205,7 +206,8 @@ core/
   realtime.py          IEX 실시간 거래량 추정, 종목 전반 투매
   cboe.py              VIX, 풋/콜
   finra.py             FINRA 장외 공매도 (키 없음)
-  fred.py              FRED 하이일드 스프레드 (FRED_KEY 권장)
+  fred.py              FRED 하이일드 스프레드·연준 금융 스트레스 (FRED_KEY 권장)
+  krx.py               KRX Open API: VKOSPI (KRX_KEY, 원본은 암호화 보관)
   finnhub.py           Finnhub 뉴스 보충 (수집기만)
   history.py           역사 속 지금 (과거 폭락 VIX 비교)
   kr.py                한국 시장 외국인·기관·개인 수급 (네이버 증권)
@@ -217,5 +219,5 @@ core/
   store.py             기록 읽기/쓰기
 .github/workflows/collect.yml   수집 일정
 tests/                 테스트 (python -m pytest -q)
-키등록.cmd             Finnhub·FRED 키를 GitHub Secrets에 넣는 더블클릭 파일 (tools/set-keys.ps1)
+키등록.cmd             Finnhub·FRED·KRX 키를 GitHub Secrets에 넣는 더블클릭 파일 (tools/set-keys.ps1)
 ```
