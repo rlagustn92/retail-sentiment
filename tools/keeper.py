@@ -24,6 +24,7 @@ SLOTS = [
     ("kr_vol", "kr_vol", {6, 0, 1, 2, 3}, {23}, lambda m: m == 37),                  # 한국 08:37 전날 KRX 확정치
     ("us", "intraday", {0, 1, 2, 3, 4}, set(range(13, 22)), lambda m: m % 15 == 4),  # 미국 장중 15분마다
     ("us_daily", "daily", {0, 1, 2, 3, 4}, {21}, lambda m: m == 40),                 # 미국 장 마감 정리
+    ("us_finra", "finra", {0, 1, 2, 3, 4}, {23}, lambda m: m == 31),                 # 미국 저녁 6~7시: 그날 FINRA 공매도
 ]
 
 

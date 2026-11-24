@@ -421,7 +421,7 @@ def main():
 
 def run():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["intraday", "daily", "backfill", "breadth", "kr", "kr_daily", "kr_hist", "kr_vol"])
+    ap.add_argument("mode", choices=["intraday", "daily", "backfill", "breadth", "kr", "kr_daily", "kr_hist", "kr_vol", "finra"])
     ap.add_argument("--days", type=int, default=10)
     ap.add_argument("--data", default="data")
     ap.add_argument("--since", default="2020-01-01", help="kr_hist: 이 날짜부터 한국 과거 수급을 채워요")
@@ -482,6 +482,9 @@ def run():
         attempt("FRED", update_fred, st, now)
         attempt("미국 시장 폭", update_us_breadth, a, st)
         trim(st)
+
+    elif args.mode == "finra":  # 미국 저녁(FINRA가 그날 파일을 올린 뒤)
+        update_finra(a, st, now)
 
     elif args.mode == "breadth":  # 미국 시장 폭·신용 과거 기록 채우기
         update_us_breadth(a, st, pd.Timestamp(args.since if args.since != "2020-01-01" else "2016-01-01").date())

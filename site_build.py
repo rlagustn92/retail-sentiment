@@ -24,6 +24,7 @@ import ui
 from core import bottom, cboe, config, history, kr, krx, sources
 from core import news as newsmod
 from core.alpaca import Alpaca
+from core.finra import freshness as finra_fresh
 from core.metrics import ET, MarketData, build_all, market_summary, side_metrics
 from core.scoring import level
 from core.store import LocalStore
@@ -95,7 +96,14 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Pretendard Var
 .seg button.on{background:var(--text);color:var(--bg);}
 .pane{display:none;}.pane.on{display:block;}
 .mkt,.nav{margin-bottom:10px;}
+.upd{display:flex;justify-content:flex-end;align-items:center;gap:8px;font-size:12px;color:var(--faint);font-weight:600;margin:-2px 4px 8px;}
+.upd button{font:inherit;font-size:12px;font-weight:800;padding:5px 11px;border-radius:10px;border:0;background:var(--card);color:var(--sub);cursor:pointer;}
 </style>"""
+# GitHub Pages는 페이지를 최대 10분 캐시해요 → 주소에 시각을 붙여 늘 최신을 받아요.
+# 열어 둔 화면은 5분마다, 다른 앱에 갔다 5분 넘어 돌아오면 바로 새로 읽어요.
+REFRESH_JS = """<script>var T0=Date.now();function rf(){location.replace(location.pathname+'?t='+Date.now());}
+setInterval(function(){if(!document.hidden)rf();},300000);
+document.addEventListener('visibilitychange',function(){if(!document.hidden&&Date.now()-T0>300000)rf();});</script>"""
 
 
 class Page:
@@ -131,16 +139,26 @@ class Page:
         body = links("".join(self.parts))
         return (f'<!doctype html><html lang="ko"><head><meta charset="utf-8">'
                 f'<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
-                f'<meta http-equiv="refresh" content="300"><title>{ui.esc(self.title)} · 개인투심체크</title>'
+                f'<title>{ui.esc(self.title)} · 개인투심체크</title>'
                 f'<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg">'
                 f'<link rel="apple-touch-icon" href="icon-192.png"><meta name="theme-color" content="#191f28">'
                 f'<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">'
                 f'<meta name="apple-mobile-web-app-title" content="투심체크">'
-                f'{ui.CSS}{EXTRA_CSS}</head><body><div class="wrap">{body}</div>{seg_js}{js}</body></html>')
+                f'{ui.CSS}{EXTRA_CSS}</head><body><div class="wrap">{body}</div>{seg_js}{REFRESH_JS}{js}</body></html>')
+
+
+def next_update() -> str:
+    """수집 순환 시각표상 다음 수집 + 페이지 만드는 데 걸리는 몇 분"""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "tools"))
+    from keeper import next_due
+    k = pd.Timestamp(next_due(NOW) + timedelta(minutes=4)).tz_convert(KST)
+    return f"{k:%H:%M}" if k.date() == pd.Timestamp(NOW).tz_convert(KST).date() else f"{k:%m/%d %H:%M}"
 
 
 def top(live: bool) -> str:
-    return ui.top(pd.Timestamp(NOW).tz_convert(KST).strftime("%m/%d %H:%M 기준"), live)
+    return (ui.top(pd.Timestamp(NOW).tz_convert(KST).strftime("%m/%d %H:%M 기준"), live)
+            + f'<div class="upd">다음 갱신 {next_update()}쯤 <button onclick="rf()">새로고침</button></div>')
 
 
 def last_run(runs: pd.DataFrame, prefix: tuple) -> dict:
@@ -404,7 +422,7 @@ def us_status(m: MarketData, runs) -> list[dict]:
             {"name": "개인·기관 체결 수급", "basis": f"마지막 구간 {ago(rb)}", "state": state(rb, 50, open_), "note": "15분 지연 + 수집기 15분마다"},
             {"name": "뉴스 (알파카·Finnhub)", "basis": ago(nw), "state": state(nw, 120, open_), "note": ""},
             {"name": "FINRA 장외 공매도", "basis": f"{_ts(fr):%m/%d} 거래일" if fr is not None else "–",
-             "state": state(fr, 4 * 24 * 60, False) if fr is not None else "없음", "note": "하루 1번 (전일)"}]
+             "state": finra_fresh(fr, NOW), "note": "미국 저녁 6시쯤 그날 파일이 나와요 (한국 아침 8시 반쯤 받아요)"}]
     return rows + run_row(runs, ("intraday", "daily", "backfill", "breadth"), "미국 수집기 마지막 실행")
 
 

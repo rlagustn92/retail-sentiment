@@ -42,6 +42,7 @@ from core import history
 from core import kr
 from core import bottom
 from core import krx
+from core.finra import freshness as finra_fresh
 from core import news as newsmod
 from core import retail_flow as rf
 from core.alpaca import Alpaca
@@ -222,7 +223,7 @@ def us_status(m: MarketData) -> list[dict]:
     rows.append({"name": "뉴스 (알파카·Finnhub)", "basis": ago(nw), "state": state(nw, 120, open_), "note": ""})
     fr = m.finra["date"].max() if m.finra is not None and not m.finra.empty else None
     rows.append({"name": "FINRA 장외 공매도", "basis": f"{_ts(fr):%m/%d} 거래일" if fr is not None else "–",
-                 "state": state(fr, 4 * 24 * 60, False) if fr is not None else "없음", "note": "하루 1번 (전일)"})
+                 "state": finra_fresh(fr), "note": "미국 저녁 6시쯤 그날 파일이 나와요 (한국 아침 8시 반쯤 받아요)"})
     r = last_run(("intraday", "daily", "backfill", "breadth"))
     if r:
         rows.append({"name": "미국 수집기 마지막 실행", "basis": f"{ago(r['ts'])} · {r['mode']}",

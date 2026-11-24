@@ -41,3 +41,18 @@ def daily(d: date, symbols: list[str]) -> pd.DataFrame | None:
         return None
     r.raise_for_status()
     return parse(r.text, symbols)
+
+
+def freshness(last, now=None) -> str:
+    """FINRA는 미국 동부 오후 6시쯤 그날 파일을 올려요. 기대하는 마지막 날(7시가 지났으면 그날, 아니면 전 거래일)보다
+    영업일로 1일까지 늦은 건 정상(수집 시각 차이), 3일까지 지연, 그보다 늦으면 멈춤. 주말은 세지 않아요."""
+    if last is None or pd.isna(last):
+        return "없음"
+    et = pd.Timestamp(now if now is not None else pd.Timestamp.now(tz="UTC")).tz_convert("America/New_York")
+    exp = et.tz_localize(None).normalize()
+    if et.hour < 19 or exp.weekday() >= 5:
+        exp -= pd.offsets.BDay(1)
+    last_d = pd.Timestamp(last)
+    last_d = (last_d.tz_convert("UTC").tz_localize(None) if last_d.tzinfo else last_d).normalize()
+    lag = len(pd.bdate_range(last_d + pd.Timedelta(days=1), exp)) if exp > last_d else 0
+    return "정상" if lag <= 1 else "지연" if lag <= 3 else "멈춤"
