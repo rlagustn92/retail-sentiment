@@ -101,7 +101,7 @@ details.row summary::-webkit-details-marker{display:none;}
 .stAltairChart,.vega-embed{background:transparent!important;}
 .nav{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 6px;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
 .nav::-webkit-scrollbar{display:none;}
-@media (hover:hover) and (pointer:fine){.nav{flex-wrap:wrap;overflow-x:visible;}}
+@media (hover:hover) and (pointer:fine){.stApp .nav{flex-wrap:wrap;overflow-x:visible;}}
 .nav a{flex:0 0 auto;font-size:15px;font-weight:700;padding:9px 15px;border-radius:999px;background:var(--card);color:var(--sub)!important;text-decoration:none!important;letter-spacing:-0.2px;}
 .nav a.on{background:var(--text);color:var(--bg)!important;}
 .nav a .d{display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:6px;vertical-align:middle;}
@@ -131,6 +131,17 @@ details.row summary::-webkit-details-marker{display:none;}
 .sum{display:flex;gap:8px;margin:2px 0 8px;flex-wrap:wrap;}
 .sum span{font-size:13px;font-weight:700;padding:6px 10px;border-radius:10px;background:var(--chip);color:var(--sub);}
 .stElementContainer:has(iframe[height="0"]){display:none;}
+details.sig summary{display:block;padding:16px 0 14px;}
+.sh{display:flex;justify-content:space-between;align-items:center;gap:10px;}
+.sh .st{font-size:16px;font-weight:700;letter-spacing:-0.3px;color:var(--text);}
+.pill{font-size:13px;font-weight:800;padding:4px 11px;border-radius:999px;white-space:nowrap;}
+.sv{display:flex;align-items:baseline;gap:10px;margin-top:6px;flex-wrap:wrap;}
+.sbig{font-size:32px;font-weight:800;letter-spacing:-1px;line-height:1.1;}
+.srule{font-size:13px;color:var(--faint);font-weight:600;}
+.ssay{font-size:15px;font-weight:700;color:var(--text);margin-top:5px;line-height:1.45;letter-spacing:-0.2px;}
+.seff{display:flex;justify-content:space-between;gap:8px;font-size:13px;font-weight:700;margin-top:6px;}
+.seff .more{color:var(--faint);font-weight:600;white-space:nowrap;}
+details.sig[open] .seff .more{visibility:hidden;}
 .back{font-size:15px;font-weight:700;color:var(--sub)!important;text-decoration:none!important;}
 </style>
 """
@@ -584,7 +595,16 @@ def bottom_hero(fg: dict | None, us: dict, kr: dict) -> str:
 <div class="head" style="font-size:21px">{esc(us['title'])}</div><div class="desc">{esc(us['desc'])}</div>""")
 
 
+def _past_line(r: dict) -> str:
+    """'과거 9번 · 3개월 뒤 오른 확률 89% (평소 77%)'"""
+    st, bs = (r.get("stats") or {}).get("3개월"), (r.get("base") or {}).get("3개월")
+    if not st or not bs or not st.get("n"):
+        return ""
+    return f"과거 {st['n']}번 · 3개월 뒤 오른 확률 {st['up']:.0%} (평소 {bs['up']:.0%})"
+
+
 def signal_rows(rows: list[dict], title: str, sub: str, verdict: dict | None = None) -> str:
+    """신호 한 줄: 제목·상태 / 큰 수치 + 켜지는 기준 / 한 줄 요약 / 과거 성적 → 누르면 자세한 설명과 표"""
     groups = [("항복", "① 항복이 나왔나 (바닥권)"), ("확인", "② 반등이 확인됐나"), ("참고", "참고 (개수에 안 넣어요)")]
     out = [f'<div class="sect">{esc(title)}</div><div class="sectsub">{esc(sub)}</div>']
     if verdict:
@@ -593,20 +613,32 @@ def signal_rows(rows: list[dict], title: str, sub: str, verdict: dict | None = N
         rs = [r for r in rows if r["group"] == g]
         if not rs:
             continue
-        out.append(f'<div class="label" style="margin:12px 0 2px">{esc(gname)}</div>')
+        out.append(f'<div class="label" style="margin:14px 0 0">{esc(gname)}</div>')
         for r in rs:
             c, label = STATE_STYLE.get(r["state"], ("var(--sub)", r["state"]))
+            hot = c.startswith("#")
+            pill = (f'<span class="pill" style="color:{c};background:{tint(c, 0.15) if hot else "var(--chip)"}">'
+                    f'{esc(label)}</span>')
+            big_c = c if hot else "var(--text)"
+            if r.get("big"):
+                mid = (f'<div class="sv"><span class="sbig" style="color:{big_c}">{esc(r["big"])}</span>'
+                       f'<span class="srule">{esc(r.get("rule") or "")}</span></div>')
+            else:
+                mid = f'<div class="srule" style="margin-top:4px">{esc(r["now"])}</div>'
+            say = f'<div class="ssay">{esc(r["say"])}</div>' if r.get("say") else ""
             eff = r.get("effect") or ""
-            effh = f'<span style="color:{EFFECT_COLOR.get(eff, "var(--sub)")};font-weight:700"> · {esc(eff)}</span>' if eff else ""
+            past = _past_line(r) or ("과거 통계는 아직 없어요" if r["state"] != "데이터 없음" and not r.get("stats") else "")
+            effl = " · ".join(x for x in (eff, past) if x)
+            effc = EFFECT_COLOR.get(eff, "var(--sub)")
             stats = ""
             if r.get("stats") and r.get("base"):
                 trs = []
                 for h in ("1개월", "3개월", "6개월", "1년"):
-                    s, b = r["stats"].get(h), r["base"].get(h)
-                    if not s or not s["n"]:
+                    st_, b = r["stats"].get(h), r["base"].get(h)
+                    if not st_ or not st_["n"]:
                         continue
-                    trs.append(f"<tr><th>{h} 뒤</th><td>{_pct(s['up'], False)} · {_pct(s['median'])}</td>"
-                               f"<td style='color:var(--faint)'>{_pct(s['worst'])}</td>"
+                    trs.append(f"<tr><th>{h} 뒤</th><td>{_pct(st_['up'], False)} · {_pct(st_['median'])}</td>"
+                               f"<td style='color:var(--faint)'>{_pct(st_['worst'])}</td>"
                                f"<td style='color:var(--sub)'>{_pct(b['up'], False)} · {_pct(b['median'])}</td></tr>")
                 cmp_ = ""
                 if r.get("compare"):
@@ -615,12 +647,14 @@ def signal_rows(rows: list[dict], title: str, sub: str, verdict: dict | None = N
                     cmp_ = (f"<div class='meta'>비교: {esc(lbl)} 1개월 뒤 오른 확률 {_pct(x.get('up'), False)} · "
                             f"중간 {_pct(x.get('median'))} · 최악 {_pct(x.get('worst'))}</div>")
                 stats = (f"<table class='ftab' style='margin-top:8px'><thead><tr><th></th><th>이 신호 뒤 (오른 확률·중간)</th>"
-                         f"<th>최악</th><th>아무 날</th></tr></thead><tbody>{''.join(trs)}</tbody></table>"
+                         f"<th>최악</th><th>평소(아무 날)</th></tr></thead><tbody>{''.join(trs)}</tbody></table>"
                          f"<div class='meta'>{esc(r['market'])} 기준 · 표본 {esc(r['sample'])} · 신호 다음 날 종가에 샀다고 계산</div>{cmp_}")
-            out.append(f"""<details class="row"><summary>
-<div class="rl"><div class="t">{esc(r['title'])}</div><div class="c">{esc(r['now'])}{effh}</div></div>
-<div class="rr"><div class="v" style="color:{c};font-size:15px">{esc(label)}</div></div></summary>
-<div class="body"><b>이게 뭐예요</b> {esc(r['what'])}<br><b>읽는 법</b> {esc(r['how'])}{stats}</div></details>""")
+            body = (f"<b>지금</b> {esc(r['now'])}<br><b>이게 뭐예요</b> {esc(r['what'])}<br><b>읽는 법</b> {esc(r['how'])}"
+                    if r.get("what") else f"<b>지금</b> {esc(r['now'])}")
+            out.append(f"""<details class="row sig"><summary>
+<div class="sh"><div class="st">{esc(r['title'])}</div>{pill}</div>{mid}{say}
+<div class="seff"><span style="color:{effc}">{esc(effl)}</span><span class="more">자세히 ›</span></div></summary>
+<div class="body">{body}{stats}</div></details>""")
     return flat("".join(out))
 
 

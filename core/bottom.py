@@ -421,6 +421,9 @@ def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series 
                          "바닥권 조건이에요. 이것만으로 반등 확인은 아니고, 아래 '반등 확인' 신호와 같이 봐요.",
                          forward_stats(spx, w["signals"]), base_stats(spx[spx.index >= f"{w['since']}-01-01"]),
                          f"{len(w['signals'])}번 · {w['since']}년~", "S&P500"))
+        rows[-1].update(big=f"{w['now']:.0%}", rule="15% 아래로 떨어지면 켜짐",
+                        say="거의 모든 종목이 무너진 투매형 바닥권이에요" if on else
+                        f"아직 {w['now']:.0%}가 50일선 위 — 바닥권(15%)까지 {(w['now'] - 0.15) * 100:.0f}%p 남았어요")
     else:
         rows.append(_row("us_washout", "항복", "시장 폭 바닥 (50일선 위 종목 15% 아래)", "데이터 없음",
                          "S&P500 구성종목 기록을 쌓는 중", "", ""))
@@ -432,6 +435,12 @@ def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series 
                          "레버리지·대표 ETF 체결에서 개인(1센트 미만 가격 개선)과 기관(20만 달러 넘는 대량 체결) 방향을 나눠 봐요.",
                          "개인이 평소보다 크게 팔고 기관이 사면 '항복 물량을 받아 가는' 모습이에요. 기록이 60거래일뿐이라 과거 통계는 아직 없어요.",
                          None, None, "기록 60거래일", "S&P500·나스닥"))
+        r_ = flow.get("retail")
+        rows[-1].update(big=(f"개인 {'매도' if r_ > 0 else '매수'} {abs(r_):.0%}" if r_ is not None else "–"),
+                        rule="개인 매도 10%↑ + 기관 매수 5%↑면 켜짐",
+                        say=("개인이 던진 물량을 기관이 받아 가는 중이에요" if on else
+                             "개인은 크게 팔지만 기관이 사 주지 않아요" if r_ is not None and r_ > 0.10 else
+                             "개인이 크게 던지는 날은 아니에요"))
     # ② 반등 확인: VIX 기간구조 역전 해소
     vt = vix_term(vix, vix3m, spx, now_ratio) if vix is not None and vix3m is not None else None
     if vt:
@@ -447,6 +456,10 @@ def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series 
         rows.append(_row("vix_resolve", "확인", "VIX 기간구조 역전 해소", st_, now,
                          "1개월 공포 지수(VIX) ÷ 3개월 공포 지수(VIX3M)예요.", how,
                          vt.get("at_end"), vt.get("base"), f"{len(vt['episodes'])}번 · {vt['since']}년~", "S&P500"))
+        rows[-1].update(big=f"{vt['ratio']:.2f}", rule="1 넘으면 공포 역전 · 다시 1 아래로 내려오면 켜짐",
+                        say=("역전이 막 풀렸어요 — 월가가 기다리는 반등 확인이에요" if vt["resolved_recent"] else
+                             f"단기 공포가 장기 공포보다 큰 '역전' {vt['days']}일째 — 1 아래로 내려와야 확인" if vt["inverted"] else
+                             "역전 없음 — 단기 공포가 평소 수준이에요"))
         if vt.get("at_start"):
             rows[-1]["compare"] = ("역전이 시작된 날 샀다면", vt["at_start"])
     # ② 반등 확인: 브레스 스러스트
@@ -460,6 +473,10 @@ def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series 
                          "원래 뉴욕증권거래소 전 종목으로 계산하는데 여기선 S&P500 구성종목으로 계산해요.",
                          forward_stats(spx, bt["signals"]), base_stats(spx[spx.index >= f"{bt['since']}-01-01"]),
                          f"{len(bt['signals'])}번 · {bt['since']}년~", "S&P500"))
+        rows[-1].update(big=f"{bt['now']:.0%}", rule="10일 안에 40% 아래 → 61.5% 위로 치솟으면 켜짐",
+                        say=("시장 전체가 한꺼번에 사자로 돌아섰어요 — 드문 반등 확인 신호" if bt["recent"] else
+                             f"준비 조건(40% 아래)은 충족 · {(0.615 - bt['now']) * 100:.0f}%p 더 오르면 켜져요" if bt["low10"] < 0.40 else
+                             "과매도 준비 조건(40% 아래)도 아직이에요"))
     else:
         rows.append(_row("us_zbt", "확인", "브레스 스러스트 (츠바이크)", "데이터 없음", "S&P500 구성종목 기록을 쌓는 중", "", ""))
     # 참고: 신용
@@ -477,6 +494,11 @@ def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series 
                          {"항복": "켜짐", "긴장": "진행 중", "평온": "아직"}[cs["level"]], now,
                          "HYG(하이일드 채권 ETF) ÷ IEF(중기 국채 ETF)가 3개월 고점에서 얼마나 빠졌는지예요.", how,
                          None, None, "", "미국 신용"))
+        rows[-1].update(big=f"{cs['dd']:+.1%}", rule=f"긴장 {cs['p90']:+.1%} · 항복 {cs['p98']:+.1%} 아래",
+                        say={"평온": "신용 시장은 멀쩡해요 — 공포가 부도 걱정까지 번지진 않았어요",
+                             "긴장": "신용 시장도 긴장하기 시작했어요",
+                             "항복": "신용 시장까지 무너진 진짜 공포 수준이에요"}[cs["level"]]
+                        + (f" (공식 스프레드 {hy['now']:.2f}%)" if hy else ""))
     # 참고: 금융 스트레스 (연준)
     ss = stress_state(stress)
     if ss and spx is not None:
@@ -490,6 +512,9 @@ def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series 
                          + (f" (최고치: {peaks})" if peaks else "") + ". 표는 0 아래에서 다시 1을 처음 넘은 주에 샀다면이에요.",
                          forward_stats(spx, ss["starts"]), base_stats(spx[spx.index >= f"{ss['since']}-01-01"]),
                          f"{len(ss['starts'])}번 · {ss['since']}년~", "S&P500"))
+        rows[-1].update(big=f"{ss['now']:+.2f}", rule="0이 평균 · 1 넘으면 스트레스",
+                        say=("금융 시스템이 스트레스 구간이에요" if ss["now"] >= 1 else
+                             "평균보다 높아지는 중이에요" if ss["now"] >= 0 else "금융 시스템은 평균보다 차분해요"))
     # 참고: CNN 공포탐욕 (백미러)
     if fg and fg.get("score") is not None:
         rows.append(_row("fg", "참고", "CNN 공포탐욕지수 (백미러)", "참고",
@@ -498,6 +523,8 @@ def checklist_us(spx: pd.Series | None, vix: pd.Series | None, vix3m: pd.Series 
                          "7가지 재료 중 5가지가 주가·VIX에서 나와요. 지난 한 달이 평소보다 얼마나 나빴는지를 보여줘요.",
                          "지난 한 달 주가와는 거의 같이 움직이지만 다음 한 달 주가와는 상관이 거의 없어요. "
                          "그래서 '공포가 크다'는 기록일 뿐, 바닥 신호로 세지 않아요.", None, None, "", "미국"))
+        rows[-1].update(big=f"{fg['score']:.0f}", rule="0~100 · 25 아래 극단적 공포",
+                        say="지난 한 달이 얼마나 나빴는지 보여주는 '백미러'라 개수에 안 넣어요")
     return rows
 
 
@@ -518,6 +545,9 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
                          "코스피·코스닥 시총 상위 300 종목 중 50일 이동평균선 위에 있는 종목 비율이에요.",
                          "15% 아래면 거의 모든 종목이 무너진 투매형 바닥 상태예요. 바닥권 조건이고, 반등 확인은 아래 신호로 봐요.",
                          forward_stats(kospi, w["signals"]), base_from(w["since"]), f"{len(w['signals'])}번 · {w['since']}년~", "코스피"))
+        rows[-1].update(big=f"{w['now']:.0%}", rule="15% 아래로 떨어지면 켜짐",
+                        say="거의 모든 종목이 무너진 투매형 바닥권이에요" if on else
+                        f"아직 {w['now']:.0%}가 50일선 위 — 바닥권(15%)까지 {(w['now'] - 0.15) * 100:.0f}%p 남았어요")
     else:
         rows.append(_row("kr_washout", "항복", "시장 폭 바닥 (50일선 위 종목 15% 아래)", "데이터 없음",
                          "시장 폭 기록을 쌓는 중", "", ""))
@@ -529,6 +559,9 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
                          "큰손이 한꺼번에 던지는 공포 정점에 가까운 날이에요. 과거엔 이런 날 뒤 몇 달 성적이 평소보다 나았지만, "
                          "그 뒤 더 빠진 경우도 있었어요(최악 값 참고).",
                          forward_stats(kospi, bp["signals"]), base_from(bp["since"]), f"{len(bp['signals'])}번 · {bp['since']}년~", "코스피"))
+        rows[-1].update(big=f"{bp['max5']:.1f}배", rule="평소의 3배 넘게 팔면 켜짐 (최근 5일 중 최대)",
+                        say=("큰손이 한꺼번에 던진 공포 정점이 나왔어요" if bp["recent"] else
+                             f"가장 세게 판 날도 평소의 {bp['max5']:.1f}배 — 공포 정점(3배)은 아니에요"))
     fs = foreign_stop(hist_market)
     if fs and ok:
         rows.append(_row("kr_foreign", "참고", "외국인 매도 멈춤", "켜짐" if fs["recent"] else
@@ -538,6 +571,10 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
                          "외국인이 5일 넘게 연속으로, 그것도 최근 1년 중 센 쪽(하위 20%)으로 팔다가 처음 순매수로 돌아선 날이에요.",
                          "흔히 '외국인이 팔다 멈추면 반등'이라고 하는데, 2020년 이후 데이터로는 효과가 없어서 개수에 넣지 않고 참고로만 보여줘요.",
                          forward_stats(kospi, fs["signals"]), base_from(fs["since"]), f"{len(fs['signals'])}번 · {fs['since']}년~", "코스피"))
+        rows[-1].update(big=f"{fs['run']}일째 매도" if fs["run"] else "순매수", rule="센 매도 5일+ 뒤 첫 순매수면 켜짐",
+                        say=("외국인이 팔다가 멈췄어요" if fs["recent"] else
+                             f"외국인이 {fs['run']}일째 팔고 있어요 (5일 합 {fs['five']:,.0f}억)" if fs["run"] else
+                             "외국인이 오늘은 순매수예요"))
     bt = breadth_thrust(breadth)
     if bt and ok:
         rows.append(_row("kr_zbt", "확인", "브레스 스러스트 (한국)",
@@ -546,6 +583,10 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
                          "시총 상위 300 종목 중 오른 종목 비율의 10일 평균이 10거래일 안에 40% 아래에서 61.5% 위로 치솟는 것.",
                          "미국 츠바이크 신호를 한국 대형주에 같은 방식으로 적용했어요.",
                          forward_stats(kospi, bt["signals"]), base_from(bt["since"]), f"{len(bt['signals'])}번 · {bt['since']}년~", "코스피"))
+        rows[-1].update(big=f"{bt['now']:.0%}", rule="10일 안에 40% 아래 → 61.5% 위로 치솟으면 켜짐",
+                        say=("시장 전체가 한꺼번에 사자로 돌아섰어요 — 드문 반등 확인 신호" if bt["recent"] else
+                             f"준비 조건(40% 아래)은 충족 · {(0.615 - bt['now']) * 100:.0f}%p 더 오르면 켜져요" if bt["low10"] < 0.40 else
+                             "과매도 준비 조건(40% 아래)도 아직이에요"))
     else:
         rows.append(_row("kr_zbt", "확인", "브레스 스러스트 (한국)", "데이터 없음", "시장 폭 기록을 쌓는 중", "", ""))
     # ② 반등 확인: VKOSPI 공포 꺾임 (미국 VIX 기간구조 해소의 한국판)
@@ -578,6 +619,12 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
                          "코스피200 옵션 가격으로 계산한 한국판 VIX예요 (KRX 정보데이터, 전 거래일 확정치).", how,
                          ends_stats, kb, f"{len(ends)}번 · {since.year}년~", "코스피"))
         rows[-1]["compare"] = ("급등 첫날 샀다면", forward_stats(kospi, starts))
+        rows[-1].update(big=f"{vs['vkospi']:.1f}", rule="1년 중앙값의 1.5배↑ 급등 → 1.2배↓로 꺾이면 켜짐",
+                        say=(f"공포 급등 {vs['days']}일째 (1년 중앙값의 {vs['ratio']:.2f}배)" if vs["in_ep"] else
+                             "급등했던 공포가 막 꺾였어요" if vs["resolved_recent"] else
+                             f"2010년 이후로는 상위 {max(1 - vs['pct_all'], 0.01):.0%}로 높지만, 올해 내내 높아 평소 대비 {vs['ratio']:.2f}배 — 급등 아님"
+                             if vs["pct_all"] is not None and vs["pct_all"] >= 0.9 else
+                             f"평소(1년 중앙값 {vs['median']:.1f}) 대비 {vs['ratio']:.2f}배 — 급등 아님"))
     elif vol_now is not None:
         rows.append(_row("kr_vkospi", "확인", "VKOSPI 공포 꺾임", "데이터 없음", "VKOSPI 기록을 쌓는 중 (KRX)", "", ""))
     # 참고: 레버리지·곱버스 쏠림 (개인 베팅 방향)
@@ -595,6 +642,10 @@ def checklist_kr(hist_market: pd.DataFrame | None, index: pd.DataFrame | None, b
                          "어느 쪽이든 그 뒤 성적이 아무 날과 크게 다르지 않아서 개수에 넣지 않아요.",
                          eb["low_stats"], eb["base"], f"{len(eb['low_dates'])}번 · {eb['since']}년~", "코스피"))
         rows[-1]["compare"] = ("상승 베팅 쏠림(상위 10%) 첫날 샀다면", eb["high_stats"])
+        rows[-1].update(big=f"{eb['b5']:+,.0f}억", rule="5일 합이 1년 중 하위 10%(하락 베팅 쏠림)면 켜짐",
+                        say=(f"하락 베팅 쪽으로 크게 기울었어요 (1년 중 {where})" if p <= 0.10 else
+                             f"레버리지로 크게 몰렸어요 (1년 중 {where}) — 과거 폭락 때 흔한 모습" if p >= 0.9 else
+                             f"5일 동안 상승 베팅 쪽으로 {eb['b5']:+,.0f}억 — 1년 기준 평소 범위({where})"))
     return rows
 
 

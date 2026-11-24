@@ -96,6 +96,8 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Pretendard Var
 .seg button.on{background:var(--text);color:var(--bg);}
 .pane{display:none;}.pane.on{display:block;}
 .mkt,.nav{margin-bottom:10px;}
+@media (hover:hover) and (pointer:fine){.nav{scrollbar-width:thin;scrollbar-color:var(--line) transparent;padding-bottom:8px;}
+.nav::-webkit-scrollbar{display:block;height:6px;}.nav::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}}
 .upd{display:flex;justify-content:flex-end;align-items:center;gap:8px;font-size:12px;color:var(--faint);font-weight:600;margin:-2px 4px 8px;}
 .upd button{font:inherit;font-size:12px;font-weight:800;padding:5px 11px;border-radius:10px;border:0;background:var(--card);color:var(--sub);cursor:pointer;}
 </style>"""
@@ -104,7 +106,8 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Pretendard Var
 REFRESH_JS = """<script>var T0=Date.now();function rf(){location.replace(location.pathname+'?t='+Date.now());}
 setInterval(function(){if(!document.hidden)rf();},300000);
 document.addEventListener('visibilitychange',function(){if(!document.hidden&&Date.now()-T0>300000)rf();});
-var NA=document.querySelector('.nav a.on');if(NA&&NA.scrollIntoView){NA.scrollIntoView({inline:'center',block:'nearest'});}</script>"""
+var NA=document.querySelector('.nav a.on');if(NA&&NA.scrollIntoView){NA.scrollIntoView({inline:'center',block:'nearest'});}
+document.querySelectorAll('.nav').forEach(function(n){n.addEventListener('wheel',function(e){if(n.scrollWidth>n.clientWidth&&Math.abs(e.deltaY)>Math.abs(e.deltaX)){n.scrollLeft+=e.deltaY;e.preventDefault();}},{passive:false});});</script>"""
 
 
 class Page:
@@ -308,7 +311,7 @@ def us_flow_state(r: pd.DataFrame) -> dict | None:
     if r is None or r.empty or "inst_buy" not in r:
         return None
     today = pd.to_datetime(r["bucket"], utc=True).dt.tz_convert(ET).dt.date.max()
-    parts, cap = [], False
+    parts, cap, first = [], False, {}
     for etf, lev in (("SPY", "SPXL"), ("QQQ", "TQQQ")):
         ins = side_metrics(r, etf, today, "inst")
         rets = [x["day"] for x in (side_metrics(r, lev, today, "retail"), side_metrics(r, etf, today, "retail"))
@@ -318,8 +321,10 @@ def us_flow_state(r: pd.DataFrame) -> dict | None:
         rd = sum(rets) / len(rets)
         if rd > 0.10 and ins["day"] < -0.05:
             cap = True
+        if not first:
+            first = {"retail": rd, "inst": ins["day"]}
         parts.append(f"{etf}: 개인 {'매도' if rd > 0 else '매수'} {abs(rd):.0%} · 기관 {'매도' if ins['day'] > 0 else '매수'} {abs(ins['day']):.0%}")
-    return {"capitulation": cap, "text": f"{today.month}/{today.day} " + " / ".join(parts)} if parts else None
+    return {"capitulation": cap, "text": f"{today.month}/{today.day} " + " / ".join(parts), **first} if parts else None
 
 
 def bottom_data(S, err) -> dict:

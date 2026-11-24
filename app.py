@@ -828,7 +828,7 @@ def us_flow_state() -> dict | None:
     if r is None or r.empty or "inst_buy" not in r:
         return None
     today = pd.to_datetime(r["bucket"], utc=True).dt.tz_convert(ET).dt.date.max()
-    parts, cap = [], False
+    parts, cap, first = [], False, {}
     for etf, lev in (("SPY", "SPXL"), ("QQQ", "TQQQ")):
         ins = side_metrics(r, etf, today, "inst")
         rets = [x["day"] for x in (side_metrics(r, lev, today, "retail"), side_metrics(r, etf, today, "retail"))
@@ -838,10 +838,12 @@ def us_flow_state() -> dict | None:
         rd = sum(rets) / len(rets)
         if rd > 0.10 and ins["day"] < -0.05:
             cap = True
+        if not first:
+            first = {"retail": rd, "inst": ins["day"]}
         parts.append(f"{etf}: 개인 {'매도' if rd > 0 else '매수'} {abs(rd):.0%} · 기관 {'매도' if ins['day'] > 0 else '매수'} {abs(ins['day']):.0%}")
     if not parts:
         return None
-    return {"capitulation": cap, "text": f"{today.month}/{today.day} " + " / ".join(parts)}
+    return {"capitulation": cap, "text": f"{today.month}/{today.day} " + " / ".join(parts), **first}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
