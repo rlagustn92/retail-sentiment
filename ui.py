@@ -101,6 +101,7 @@ details.row summary::-webkit-details-marker{display:none;}
 .stAltairChart,.vega-embed{background:transparent!important;}
 .nav{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 6px;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
 .nav::-webkit-scrollbar{display:none;}
+@media (hover:hover) and (pointer:fine){.nav{flex-wrap:wrap;overflow-x:visible;}}
 .nav a{flex:0 0 auto;font-size:15px;font-weight:700;padding:9px 15px;border-radius:999px;background:var(--card);color:var(--sub)!important;text-decoration:none!important;letter-spacing:-0.2px;}
 .nav a.on{background:var(--text);color:var(--bg)!important;}
 .nav a .d{display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:6px;vertical-align:middle;}

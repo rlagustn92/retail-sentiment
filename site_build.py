@@ -103,7 +103,8 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Pretendard Var
 # 열어 둔 화면은 5분마다, 다른 앱에 갔다 5분 넘어 돌아오면 바로 새로 읽어요.
 REFRESH_JS = """<script>var T0=Date.now();function rf(){location.replace(location.pathname+'?t='+Date.now());}
 setInterval(function(){if(!document.hidden)rf();},300000);
-document.addEventListener('visibilitychange',function(){if(!document.hidden&&Date.now()-T0>300000)rf();});</script>"""
+document.addEventListener('visibilitychange',function(){if(!document.hidden&&Date.now()-T0>300000)rf();});
+var NA=document.querySelector('.nav a.on');if(NA&&NA.scrollIntoView){NA.scrollIntoView({inline:'center',block:'nearest'});}</script>"""
 
 
 class Page:
