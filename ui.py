@@ -142,6 +142,19 @@ details.sig summary{display:block;padding:16px 0 14px;}
 .seff{display:flex;justify-content:space-between;gap:8px;font-size:13px;font-weight:700;margin-top:6px;}
 .seff .more{color:var(--faint);font-weight:600;white-space:nowrap;}
 details.sig[open] .seff .more{visibility:hidden;}
+.body .ftab th:first-child{white-space:nowrap;}
+.snum{font-size:13px;color:var(--sub);font-weight:600;margin-top:3px;line-height:1.45;}
+.gz{margin:10px 0 2px;}
+.gz .ge{display:flex;justify-content:space-between;font-size:11px;font-weight:700;color:var(--faint);margin-bottom:4px;}
+.gz .gt{position:relative;height:8px;border-radius:999px;background:var(--track);}
+.gz .mk{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--faint);opacity:.7;}
+.gz .dot{position:absolute;top:50%;width:14px;height:14px;border-radius:50%;transform:translate(-50%,-50%);border:2px solid var(--card);}
+.gz .gm{position:relative;height:15px;font-size:11px;font-weight:700;color:var(--faint);}
+.gz .gm span{position:absolute;top:3px;transform:translateX(-50%);white-space:nowrap;}
+.easy{background:var(--card);border-radius:12px;padding:12px 14px;margin-bottom:10px;line-height:1.6;}
+.easy .h{font-weight:800;margin-bottom:4px;}
+.hl{display:flex;gap:8px;align-items:flex-start;margin-top:5px;}
+.hl .tg{font-size:12px;font-weight:800;padding:2px 8px;border-radius:8px;white-space:nowrap;margin-top:2px;}
 .back{font-size:15px;font-weight:700;color:var(--sub)!important;text-decoration:none!important;}
 </style>
 """
@@ -595,6 +608,109 @@ def bottom_hero(fg: dict | None, us: dict, kr: dict) -> str:
 <div class="head" style="font-size:21px">{esc(us['title'])}</div><div class="desc">{esc(us['desc'])}</div>""")
 
 
+# 신호마다: num = 이 숫자가 뭔지(늘 보임), easy = 쉽게 말하면, hi/lo = 높으면/낮으면,
+# gauge = (왼쪽 끝 값, 오른쪽 끝 값, [(눈금 값, 글자)], 왼쪽 뜻, 오른쪽 뜻)
+def _wash(who: str) -> dict:
+    return {"num": f"{who} 회사 중, 주가가 최근 50일 평균보다 높은 회사의 비율",
+            "easy": f"반 학생들 중 '요즘 평균 점수보다 잘 본 학생'이 몇 %인지 세는 것과 같아요. 평소엔 절반 넘게(50~70%)가 "
+                    "평균 위에 있어요. 15% 아래면 거의 모든 회사 주가가 무너진 거예요 — 사람들이 겁에 질려 다 같이 팔아 버린 "
+                    "'투매' 바닥에서 자주 나와요.",
+            "hi": "높을수록 시장이 튼튼해요 (바닥과는 거리가 멀어요)", "lo": "15% 아래면 거의 다 무너진 바닥권",
+            "gauge": (0.0, 1.0, [(0.15, "15%"), (0.5, "50%")], "다 무너짐", "대부분 튼튼")}
+
+
+def _zbt(who: str) -> dict:
+    return {"num": f"{who} 중 그날 주가가 오른 회사 비율의 10일 평균",
+            "easy": "매일 '오늘 오른 회사가 몇 %?'를 세서 10일 평균을 내요. 보통은 절반(50%) 근처예요. 40% 아래로 떨어졌다는 건 "
+                    "열흘 내내 거의 다 떨어졌다는 뜻이고, 그러다 10일 안에 61.5% 넘게 확 올라가면 '다 같이 사러 몰려왔다'는 뜻이에요. "
+                    "이렇게 짧은 시간에 분위기가 완전히 뒤집히는 건 드물어서, 하락이 끝났다는 강한 증거로 봐요.",
+            "hi": "61.5% 넘게 치솟으면 다 같이 사러 몰려옴 (강한 반등 신호)", "lo": "40% 아래면 열흘 내내 다 같이 떨어짐 (준비 조건)",
+            "gauge": (0.25, 0.75, [(0.40, "40%"), (0.615, "61.5%")], "다 같이 하락", "다 같이 상승")}
+
+
+EXPLAIN = {
+    "us_washout": _wash("S&P500 500개"),
+    "kr_washout": _wash("코스피·코스닥 시총 상위 300개"),
+    "us_zbt": _zbt("S&P500 회사"),
+    "kr_zbt": _zbt("시총 상위 300개 회사"),
+    "us_retail": {
+        "num": "그날 SPY(S&P500 ETF)에서 개인이 판 돈이 산 돈보다 얼마나 많았나 (거래 중 비율)",
+        "easy": "주식을 사고파는 사람을 두 무리로 나눠 봐요. 일반인(개인)과 큰 회사·펀드(기관)예요. 바닥에선 겁먹은 개인이 던지고, "
+                "기관이 그걸 싸게 주워 가는 일이 많아요. 그래서 '개인은 많이 팔고 기관은 사는 날'을 찾아요.",
+        "hi": "개인 매도가 크고 기관이 사면: 항복 물량이 넘어가는 바닥 모습", "lo": "개인이 별로 안 팔거나 기관도 같이 팔면: 아직"},
+    "vix_resolve": {
+        "num": "'이번 달 무서움'(VIX) ÷ '석 달 무서움'(VIX3M)",
+        "easy": "VIX는 '앞으로 한 달 동안 주가가 얼마나 출렁일까' 하는 걱정 점수, VIX3M은 '석 달 동안'의 걱정 점수예요. 평소엔 먼 "
+                "미래가 더 불확실하니까 석 달 걱정이 더 커서, 나눈 값이 1보다 작아요. 1을 넘으면 '석 달 뒤보다 당장 이번 달이 더 "
+                "무섭다' — 사람들이 지금 겁에 질렸다는 뜻이에요. 그러다 다시 1 아래로 내려오면 '급한 공포가 지나갔다'는 뜻이라, "
+                "월가는 바로 이때를 반등 확인으로 봐요.",
+        "hi": "1보다 크면 지금 당장 겁에 질린 상태 (공포 한가운데)", "lo": "1보다 작으면 평소 상태 · 1 위에 있다가 내려오는 순간이 신호",
+        "gauge": (0.8, 1.3, [(1.0, "1")], "평온", "당장 패닉")},
+    "credit": {
+        "num": "위험한 회사 채권(HYG) ÷ 안전한 국채(IEF)가 최근 석 달 최고점보다 얼마나 떨어졌나",
+        "easy": "돈을 빌려준 사람들이 '회사들이 망할까' 겁나면, 위험한 회사 채권부터 팔고 안전한 나라 채권으로 도망가요. 그래서 이 "
+                "값이 크게 떨어질수록 공포가 주식을 넘어 '부도 걱정'까지 번졌다는 뜻이에요. 주식만 빠지고 이게 멀쩡하면 아직 진짜 "
+                "위기는 아니에요.",
+        "hi": "0에 가까우면 신용 시장은 멀쩡해요", "lo": "크게 마이너스면 부도 걱정까지 번진 진짜 공포"},
+    "stress": {
+        "num": "연준이 18가지 금융 숫자로 매주 재는 '금융 시스템 체온' (0 = 평소 체온)",
+        "easy": "금융 시스템의 체온계라고 생각하면 돼요. 0이 평소 체온이고, 1을 넘으면 열이 나는 거예요. 2008년 금융위기 땐 9.7, "
+                "코로나 땐 5.6까지 올랐어요. 주가가 빠져도 이 체온이 낮으면 은행·금융 쪽은 아직 멀쩡하다는 뜻이에요.",
+        "hi": "1 넘으면 금융 시스템에 열이 남 (위기 쪽)", "lo": "0 아래면 평소보다 차분 (위기 아님)",
+        "gauge": (-1.5, 3.0, [(0.0, "0 평소"), (1.0, "1")], "차분", "금융 위기")},
+    "fg": {
+        "num": "CNN이 7가지 숫자로 만든 0~100 시장 분위기 점수 (0 = 극단적 공포)",
+        "easy": "시장 분위기 점수예요. 0에 가까울수록 다들 겁먹었고, 100에 가까울수록 다들 신났어요. 다만 지난 한 달 동안 일어난 "
+                "일을 모아 만든 '백미러' 점수라, 앞으로 오를지 내릴지는 잘 못 맞혀요. 그래서 개수에 안 넣어요.",
+        "hi": "75 넘으면 다들 신남 (탐욕)", "lo": "25 아래면 다들 겁먹음 (공포)",
+        "gauge": (0.0, 100.0, [(25.0, "25"), (75.0, "75")], "극단적 공포", "극단적 탐욕")},
+    "kr_panic": {
+        "num": "외국인+기관이 하루에 판 돈 ÷ 평소(최근 60일) 하루 크기 — 최근 5일 중 가장 센 날",
+        "easy": "큰손(외국인과 기관)이 하루에 판 돈이 평소의 몇 배인지예요. 1배면 평소만큼, 3배면 평소의 세 배를 한꺼번에 던진 "
+                "거예요. 이렇게 겁에 질려 한꺼번에 던지는 날이 공포의 꼭대기인 경우가 많았어요.",
+        "hi": "3배 넘으면 큰손이 한꺼번에 투매 (공포 정점 후보)", "lo": "1배 근처면 평소 수준",
+        "gauge": (0.0, 5.0, [(1.0, "1배"), (3.0, "3배")], "평소", "한꺼번에 투매")},
+    "kr_foreign": {
+        "num": "외국인이 며칠 연속으로 '산 것보다 판 게 많은' 날이었는지",
+        "easy": "외국인이 며칠째 계속 팔다가 처음으로 사는 날을 봐요. 흔히 '외국인이 팔다 멈추면 반등'이라고 하는데, 2020년 이후 "
+                "실제 데이터로 확인해 보니 효과가 없었어요. 그래서 참고로만 보여줘요.",
+        "hi": "연속 매도가 길면 외국인이 계속 빠져나가는 중", "lo": "순매수로 바뀌면 매도가 멈춤 (다만 반등 효과는 없었어요)"},
+    "kr_vkospi": {
+        "num": "한국판 공포 지수 — 앞으로 한 달 코스피가 얼마나 출렁일지 옵션 시장이 예상한 값 (눈금은 올해 평소 대비 몇 배)",
+        "easy": "VKOSPI는 한국 주식시장의 '걱정 점수'예요. 사람들이 겁먹을수록 높아지고, 2010년 이후 보통은 17 근처였어요. "
+                "여기선 '올해 평소보다 얼마나 높나'를 봐요. 평소의 1.5배 넘게 뛰면 공포 급등, 다시 1.2배 아래로 내려오면 공포가 "
+                "꺾인 걸로 봐요.",
+        "hi": "평소의 1.5배 넘으면 공포 급등", "lo": "1배 근처면 올해 평소 수준",
+        "gauge": (0.5, 2.0, [(1.0, "평소"), (1.5, "1.5배")], "평소보다 잠잠", "크게 겁먹음")},
+    "kr_etf": {
+        "num": "5일 동안 레버리지(오르면 2배)로 들어온 돈 − 곱버스·인버스(내리면 돈 버는 상품)로 들어온 돈",
+        "easy": "레버리지는 '오른다'에 거는 상품, 곱버스는 '떨어진다'에 거는 상품이에요. 둘 중 어디로 개인 돈이 더 들어갔는지 보면 "
+                "개인이 어느 쪽에 걸고 있는지 알 수 있어요. +면 '오른다'에 더 걸었고, −면 '떨어진다'에 더 걸었어요. 눈금은 "
+                "지난 1년 중 어디쯤인지예요.",
+        "hi": "오른쪽 끝(상위 10%): '오른다'에 돈이 몰림 — 과거 폭락 때 흔했어요", "lo": "왼쪽 끝(하위 10%): '떨어진다'에 돈이 몰림",
+        "gauge": (0.0, 1.0, [(0.1, "10%"), (0.5, "중간"), (0.9, "90%")], "하락에 베팅", "상승에 베팅")},
+}
+
+
+def _gauge(r: dict, color: str) -> str:
+    ex = EXPLAIN.get(r["key"], {})
+    g = ex.get("gauge")
+    v = r.get("val")
+    if r["key"] == "credit" and v is not None and r.get("p98") is not None:   # 신용은 기준선이 데이터에서 나와요
+        g = (min(r["p98"] * 1.4, v - 0.01), 0.005, [(r["p98"], "항복"), (r["p90"], "긴장")], "부도 걱정 큼", "멀쩡")
+    if not g or v is None or v != v:
+        return ""
+    lo, hi, marks, left, right = g
+
+    def pos(x):
+        return max(0.0, min(100.0, (x - lo) / (hi - lo) * 100))
+    mk = "".join(f'<i class="mk" style="left:{pos(x):.1f}%"></i>' for x, _ in marks)
+    ml = "".join(f'<span style="left:{pos(x):.1f}%">{esc(t)}</span>' for x, t in marks)
+    return (f'<div class="gz"><div class="ge"><span>← {esc(left)}</span><span>{esc(right)} →</span></div>'
+            f'<div class="gt">{mk}<b class="dot" style="left:{pos(v):.1f}%;background:{color}"></b></div>'
+            f'<div class="gm">{ml}</div></div>')
+
+
 def _past_line(r: dict) -> str:
     """'과거 9번 · 3개월 뒤 오른 확률 89% (평소 77%)'"""
     st, bs = (r.get("stats") or {}).get("3개월"), (r.get("base") or {}).get("3개월")
@@ -620,9 +736,13 @@ def signal_rows(rows: list[dict], title: str, sub: str, verdict: dict | None = N
             pill = (f'<span class="pill" style="color:{c};background:{tint(c, 0.15) if hot else "var(--chip)"}">'
                     f'{esc(label)}</span>')
             big_c = c if hot else "var(--text)"
+            ex = EXPLAIN.get(r["key"], {})
             if r.get("big"):
                 mid = (f'<div class="sv"><span class="sbig" style="color:{big_c}">{esc(r["big"])}</span>'
                        f'<span class="srule">{esc(r.get("rule") or "")}</span></div>')
+                if ex.get("num"):
+                    mid += f'<div class="snum">이 숫자는 → {esc(ex["num"])}</div>'
+                mid += _gauge(r, c if hot else "var(--text)")
             else:
                 mid = f'<div class="srule" style="margin-top:4px">{esc(r["now"])}</div>'
             say = f'<div class="ssay">{esc(r["say"])}</div>' if r.get("say") else ""
@@ -649,11 +769,18 @@ def signal_rows(rows: list[dict], title: str, sub: str, verdict: dict | None = N
                 stats = (f"<table class='ftab' style='margin-top:8px'><thead><tr><th></th><th>이 신호 뒤 (오른 확률·중간)</th>"
                          f"<th>최악</th><th>평소(아무 날)</th></tr></thead><tbody>{''.join(trs)}</tbody></table>"
                          f"<div class='meta'>{esc(r['market'])} 기준 · 표본 {esc(r['sample'])} · 신호 다음 날 종가에 샀다고 계산</div>{cmp_}")
-            body = (f"<b>지금</b> {esc(r['now'])}<br><b>이게 뭐예요</b> {esc(r['what'])}<br><b>읽는 법</b> {esc(r['how'])}"
-                    if r.get("what") else f"<b>지금</b> {esc(r['now'])}")
+            easy = ""
+            if ex.get("easy"):
+                easy = (f'<div class="easy"><div class="h">💡 쉽게 말하면</div>{esc(ex["easy"])}'
+                        f'<div class="hl"><span class="tg" style="color:#e5484d;background:{tint("#e5484d", 0.12)}">높으면</span>'
+                        f'<span>{esc(ex["hi"])}</span></div>'
+                        f'<div class="hl"><span class="tg" style="color:#3e63dd;background:{tint("#3e63dd", 0.12)}">낮으면</span>'
+                        f'<span>{esc(ex["lo"])}</span></div></div>')
+            body = easy + (f"<b>지금</b> {esc(r['now'])}<br><b>정확히는</b> {esc(r['what'])}<br><b>읽는 법</b> {esc(r['how'])}"
+                           if r.get("what") else f"<b>지금</b> {esc(r['now'])}")
             out.append(f"""<details class="row sig"><summary>
 <div class="sh"><div class="st">{esc(r['title'])}</div>{pill}</div>{mid}{say}
-<div class="seff"><span style="color:{effc}">{esc(effl)}</span><span class="more">자세히 ›</span></div></summary>
+<div class="seff"><span style="color:{effc}">{esc(effl)}</span><span class="more">쉬운 설명 ›</span></div></summary>
 <div class="body">{body}{stats}</div></details>""")
     return flat("".join(out))
 
